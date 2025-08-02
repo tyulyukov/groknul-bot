@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/app.js",
-    "dev": "tsx src/app.ts",
+    "dev": "tsx src/app.ts | pino-pretty --colorize --levelFirst --translateTime \"HH:MM:ss\"",
     "clean": "rm -rf dist"
   },
   "type": "module",
