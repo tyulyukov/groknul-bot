@@ -1,0 +1,44 @@
+{
+  "name": "groknul-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot that observes group chats and generates AI responses with context",
+  "main": "dist/app.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/app.js",
+    "dev": "tsx src/app.ts",
+    "clean": "rm -rf dist"
+  },
+  "type": "module",
+  "dependencies": {
+    "grammy": "^1.21.1",
+    "@grammyjs/auto-retry": "^2.0.2",
+    "@grammyjs/hydrate": "^1.4.1",
+    "@grammyjs/parse-mode": "^1.10.0",
+    "@grammyjs/runner": "^2.0.3",
+    "@grammyjs/storage-mongodb": "^2.4.2",
+    "@grammyjs/transformer-throttler": "^1.2.1",
+    "hono": "^4.0.0",
+    "@hono/node-server": "^1.4.0",
+    "mongodb": "^6.3.0",
+    "openai": "^4.20.1",
+    "dotenv": "^16.3.1",
+    "pino": "^8.16.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.3",
+    "@types/node": "^20.10.0",
+    "@types/pino": "^7.0.5",
+    "@typescript-eslint/eslint-plugin": "^8.38.0",
+    "@typescript-eslint/parser": "^8.38.0",
+    "eslint": "^9.32.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.3",
+    "pino-pretty": "^13.0.0",
+    "prettier": "^3.6.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "private": true
+}
