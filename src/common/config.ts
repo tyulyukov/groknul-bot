@@ -19,16 +19,19 @@ interface Config {
   };
 }
 
-function validateEnvVar(name: string, value: string | undefined): string {
+const getRequiredEnvVar = (name: string): string => {
+  const value = process.env[name];
+
   if (!value) {
     throw new Error(`Environment variable ${name} is required but not set`);
   }
+
   return value;
-}
+};
 
 export const config: Config = {
   telegram: {
-    apiKey: validateEnvVar('TELEGRAM_BOT_API_KEY', process.env.TELEGRAM_BOT_API_KEY),
+    apiKey: getRequiredEnvVar('TELEGRAM_BOT_API_KEY'),
     mode: (process.env.TELEGRAM_BOT_MODE as 'webhook' | 'polling') || 'polling',
     webhookUrl: process.env.TELEGRAM_BOT_WEBHOOK_URL,
     webhookSecret: process.env.TELEGRAM_BOT_WEBHOOK_SECRET,
@@ -36,9 +39,9 @@ export const config: Config = {
     serverPort: parseInt(process.env.TELEGRAM_BOT_SERVER_PORT || '3000', 10),
   },
   openRouter: {
-    apiKey: validateEnvVar('OPENROUTER_API_KEY', process.env.OPENROUTER_API_KEY),
+    apiKey: getRequiredEnvVar('OPENROUTER_API_KEY'),
   },
   mongodb: {
-    uri: validateEnvVar('MONGODB_URI', process.env.MONGODB_URI),
+    uri: getRequiredEnvVar('MONGODB_URI'),
   },
-}; 
+};

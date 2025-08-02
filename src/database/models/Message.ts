@@ -1,4 +1,4 @@
-import { Collection } from 'mongodb';
+import { Collection, CreateIndexesOptions, IndexSpecification } from 'mongodb';
 import { TelegramUser } from './TelegramUser.js';
 import logger from '../../common/logger.js';
 
@@ -17,7 +17,7 @@ export interface MessageReaction {
 
 export interface PopulatedMessageReaction {
   userTelegramId: number;
-  user?: TelegramUser; // Populated user data
+  user?: TelegramUser;
   emoji?: string;
   customEmojiId?: string;
   addedAt: Date;
@@ -51,12 +51,12 @@ export interface Message {
 }
 
 export interface PopulatedMessage extends Omit<Message, 'reactions'> {
-  user?: TelegramUser; // Populated user data
+  user?: TelegramUser;
   replyToMessage?: {
-    user?: TelegramUser; // Populated user data of the replied-to message sender
-  } & Message; // Populated replied-to message
-  reactions: PopulatedMessageReaction[]; // Populated reactions
-  forwardFromUser?: TelegramUser; // Populated forward user data
+    user?: TelegramUser;
+  } & Message;
+  reactions: PopulatedMessageReaction[];
+  forwardFromUser?: TelegramUser;
 }
 
 export class MessageModel {
@@ -67,12 +67,9 @@ export class MessageModel {
     chatTelegramId: number,
   ): Promise<PopulatedMessage | null> {
     const pipeline = [
-      // Match the specific message
       {
         $match: { telegramId, chatTelegramId },
       },
-
-      // Lookup user who sent the message
       {
         $lookup: {
           from: 'telegramusers',
@@ -81,8 +78,6 @@ export class MessageModel {
           as: 'user',
         },
       },
-
-      // Lookup replied-to message
       {
         $lookup: {
           from: 'messages',
@@ -101,7 +96,6 @@ export class MessageModel {
                 },
               },
             },
-            // Lookup user of the replied-to message
             {
               $lookup: {
                 from: 'telegramusers',
@@ -110,7 +104,6 @@ export class MessageModel {
                 as: 'user',
               },
             },
-            // Add the user field
             {
               $addFields: {
                 user: { $arrayElemAt: ['$user', 0] },
@@ -120,8 +113,6 @@ export class MessageModel {
           as: 'replyToMessage',
         },
       },
-
-      // Lookup forward user
       {
         $lookup: {
           from: 'telegramusers',
@@ -130,8 +121,6 @@ export class MessageModel {
           as: 'forwardFromUser',
         },
       },
-
-      // Lookup users for reactions
       {
         $lookup: {
           from: 'telegramusers',
@@ -140,8 +129,6 @@ export class MessageModel {
           as: 'reactionUsers',
         },
       },
-
-      // Transform the results
       {
         $addFields: {
           user: { $arrayElemAt: ['$user', 0] },
@@ -177,8 +164,6 @@ export class MessageModel {
           },
         },
       },
-
-      // Remove the temporary reactionUsers field
       {
         $unset: 'reactionUsers',
       },
@@ -232,7 +217,6 @@ export class MessageModel {
     const now = new Date();
     const newVersion = existingMessage.edits.length + 1;
 
-    // Add current text to edits history
     const editEntry: MessageEdit = {
       text: existingMessage.text,
       editedAt: now,
@@ -269,19 +253,16 @@ export class MessageModel {
 
     const now = new Date();
 
-    // Remove only specified reactions of this user
     let updatedReactions = message.reactions.filter((reaction) => {
-      // Keep other users' reactions
       if (reaction.userTelegramId !== userTelegramId) return true;
-      // Keep this user's reactions UNLESS they should be removed
+
       return !removedReactions.some(
         (r) =>
           r.emoji === reaction.emoji &&
-          r.customEmojiId === reaction.customEmojiId, // compare key fields
+          r.customEmojiId === reaction.customEmojiId,
       );
     });
 
-    // Add new reactions for this user
     const newReactions: MessageReaction[] = addedReactions.map((reaction) => ({
       ...reaction,
       userTelegramId: userTelegramId,
@@ -306,22 +287,15 @@ export class MessageModel {
     limit: number = 500,
   ): Promise<PopulatedMessage[]> {
     const pipeline = [
-      // Match messages from the specific chat
       {
         $match: { chatTelegramId: chatId },
       },
-
-      // Sort by sentAt descending (newest first)
       {
         $sort: { sentAt: -1 },
       },
-
-      // Limit results
       {
         $limit: limit,
       },
-
-      // Lookup user who sent the message
       {
         $lookup: {
           from: 'telegramusers',
@@ -330,8 +304,6 @@ export class MessageModel {
           as: 'user',
         },
       },
-
-      // Lookup replied-to message
       {
         $lookup: {
           from: 'messages',
@@ -350,7 +322,6 @@ export class MessageModel {
                 },
               },
             },
-            // Lookup user of the replied-to message
             {
               $lookup: {
                 from: 'telegramusers',
@@ -359,7 +330,6 @@ export class MessageModel {
                 as: 'user',
               },
             },
-            // Add the user field
             {
               $addFields: {
                 user: { $arrayElemAt: ['$user', 0] },
@@ -369,8 +339,6 @@ export class MessageModel {
           as: 'replyToMessage',
         },
       },
-
-      // Lookup forward user
       {
         $lookup: {
           from: 'telegramusers',
@@ -379,8 +347,6 @@ export class MessageModel {
           as: 'forwardFromUser',
         },
       },
-
-      // Lookup users for reactions
       {
         $lookup: {
           from: 'telegramusers',
@@ -389,8 +355,6 @@ export class MessageModel {
           as: 'reactionUsers',
         },
       },
-
-      // Transform the results
       {
         $addFields: {
           user: { $arrayElemAt: ['$user', 0] },
@@ -426,8 +390,6 @@ export class MessageModel {
           },
         },
       },
-
-      // Remove the temporary reactionUsers field
       {
         $unset: 'reactionUsers',
       },
@@ -438,44 +400,48 @@ export class MessageModel {
       .toArray();
   }
 
-  /**
-   * Create database indexes for optimal query performance
-   */
   async createIndexes(): Promise<void> {
-    const indexCreations = [
-      // Main query index for getRecentMessages
-      async () =>
-        this.collection.createIndex({ chatTelegramId: 1, sentAt: -1 }),
-
-      // User lookup indexes
-      async () => this.collection.createIndex({ userTelegramId: 1 }),
-      async () => this.collection.createIndex({ forwardFromUserTelegramId: 1 }),
-
-      // Reply lookup index - compound for efficient lookups
-      async () =>
-        this.collection.createIndex(
-          { telegramId: 1, chatTelegramId: 1 },
-          { unique: true },
-        ),
-
-      // Reaction user lookup index
-      async () =>
-        this.collection.createIndex({ 'reactions.userTelegramId': 1 }),
-
-      // Individual field indexes for general performance
-      async () =>
-        this.collection.createIndex({ telegramId: 1 }, { unique: true }),
+    const indexDefinitions: {
+      keys: IndexSpecification;
+      options?: CreateIndexesOptions;
+      description: string;
+    }[] = [
+      {
+        keys: { chatTelegramId: 1, sentAt: -1 },
+        description: 'Main query index for getRecentMessages',
+      },
+      {
+        keys: { userTelegramId: 1 },
+        description: 'User lookup index',
+      },
+      {
+        keys: { forwardFromUserTelegramId: 1 },
+        description: 'Forward user lookup index',
+      },
+      {
+        keys: { telegramId: 1, chatTelegramId: 1 },
+        options: { unique: true },
+        description: 'Reply lookup compound index',
+      },
+      {
+        keys: { 'reactions.userTelegramId': 1 },
+        description: 'Reaction user lookup index',
+      },
+      {
+        keys: { telegramId: 1 },
+        options: { unique: true },
+        description: 'Unique message ID index',
+      },
     ];
 
-    for (const createIndex of indexCreations) {
+    for (const def of indexDefinitions) {
       try {
-        await createIndex();
-        logger.info(`Created Message index successfully`);
+        await this.collection.createIndex(def.keys, def.options);
+        logger.info(`Created Message index successfully: ${def.description}`);
       } catch (error) {
-        // Index might already exist, log but don't throw
-        logger.info(
+        logger.error(
           error,
-          `Message index creation skipped (may already exist)`,
+          `Message index creation failed (may already exist): ${def.description}`,
         );
       }
     }

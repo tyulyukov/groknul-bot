@@ -1,8 +1,8 @@
 import { config } from './common/config.js';
 import logger from './common/logger.js';
-import { database } from './database/index.js';
-import { TelegramBotService } from './services/TelegramBotService.js';
-import { WebhookServer } from './server/WebhookServer.js';
+import { database } from './database';
+import { TelegramBotService } from './services/telegram-bot.service';
+import { WebhookServer } from './servers/webhook.server';
 
 class Application {
   private telegramBotService: TelegramBotService | null = null;
@@ -12,15 +12,12 @@ class Application {
     try {
       logger.info('Starting Groknul Bot application...');
 
-      // Initialize database
       logger.info('Initializing database connection...');
       await database.initialize();
 
-      // Initialize Telegram bot service
       logger.info('Initializing Telegram bot service...');
       this.telegramBotService = new TelegramBotService();
 
-      // Initialize webhook server if needed
       if (config.telegram.mode === 'webhook') {
         logger.info('Initializing webhook server...');
         this.webhookServer = new WebhookServer(this.telegramBotService);
@@ -39,11 +36,9 @@ class Application {
         throw new Error('Application not initialized');
       }
 
-      // Start the bot
       logger.info('Starting Telegram bot...');
       await this.telegramBotService.start();
 
-      // Start webhook server if in webhook mode
       if (this.webhookServer) {
         logger.info('Starting webhook server...');
         await this.webhookServer.start();
@@ -57,7 +52,6 @@ class Application {
         'Groknul Bot started successfully',
       );
 
-      // Setup graceful shutdown
       this.setupGracefulShutdown();
     } catch (error) {
       logger.error(error, 'Failed to start application');
@@ -76,16 +70,14 @@ class Application {
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-    // Handle uncaught exceptions
     process.on('uncaughtException', (error) => {
       logger.error(error, 'Uncaught exception');
-      shutdown('uncaughtException');
+      return shutdown('uncaughtException');
     });
 
-    // Handle unhandled promise rejections
     process.on('unhandledRejection', (reason, promise) => {
       logger.error({ reason, promise }, 'Unhandled promise rejection');
-      shutdown('unhandledRejection');
+      return shutdown('unhandledRejection');
     });
   }
 
@@ -93,12 +85,10 @@ class Application {
     logger.info('Shutting down application...');
 
     try {
-      // Stop webhook server
       if (this.webhookServer) {
         await this.webhookServer.stop();
       }
 
-      // Disconnect from database
       await database.disconnect();
 
       logger.info('Application shutdown completed');
@@ -108,7 +98,6 @@ class Application {
   }
 }
 
-// Create and start the application
 const app = new Application();
 
 async function main() {
@@ -121,7 +110,6 @@ async function main() {
   }
 }
 
-// Start the application
 main().catch((error) => {
   logger.error(error, 'Unhandled error in main');
   process.exit(1);

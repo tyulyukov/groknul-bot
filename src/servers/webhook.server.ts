@@ -1,9 +1,8 @@
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
-import { createHash, timingSafeEqual } from 'crypto';
 import { config } from '../common/config.js';
 import logger from '../common/logger.js';
-import { TelegramBotService } from '../services/TelegramBotService.js';
+import { TelegramBotService } from '../services/telegram-bot.service';
 import { webhookCallback } from 'grammy';
 
 export class WebhookServer {
@@ -17,7 +16,6 @@ export class WebhookServer {
   }
 
   private setupRoutes(): void {
-    // Health check endpoint
     this.app.get('/health', async (c) => {
       return c.json({
         status: 'ok',
@@ -26,7 +24,6 @@ export class WebhookServer {
       });
     });
 
-    // Root endpoint
     this.app.get('/', async (c) => {
       return c.json({
         message: 'Groknul Bot API',
@@ -35,7 +32,6 @@ export class WebhookServer {
       });
     });
 
-    // Telegram webhook endpoint
     this.app.post(
       '/webhook',
       webhookCallback(this.telegramBotService.getBot(), 'hono', {
@@ -43,7 +39,6 @@ export class WebhookServer {
       }),
     );
 
-    // 404 handler
     this.app.notFound((c) => {
       logger.warn(
         {
@@ -57,7 +52,6 @@ export class WebhookServer {
       return c.json({ error: 'Not found' }, 404);
     });
 
-    // Error handler
     this.app.onError((err, c) => {
       logger.error(
         {
@@ -110,7 +104,6 @@ export class WebhookServer {
   async stop(): Promise<void> {
     logger.info('Stopping webhook server');
 
-    // Remove webhook if in webhook mode
     if (config.telegram.mode === 'webhook') {
       try {
         await this.telegramBotService.getBot().api.deleteWebhook();
@@ -119,9 +112,5 @@ export class WebhookServer {
         logger.error(error, 'Failed to remove webhook');
       }
     }
-  }
-
-  getApp(): Hono {
-    return this.app;
   }
 }

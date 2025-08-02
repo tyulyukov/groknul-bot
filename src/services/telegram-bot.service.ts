@@ -2,20 +2,15 @@ import { Bot, Context, GrammyError, HttpError, session } from 'grammy';
 import { autoRetry } from '@grammyjs/auto-retry';
 import { hydrate, HydrateFlavor } from '@grammyjs/hydrate';
 import { parseMode } from '@grammyjs/parse-mode';
-import { run } from '@grammyjs/runner';
 import { MongoDBAdapter } from '@grammyjs/storage-mongodb';
 import { apiThrottler } from '@grammyjs/transformer-throttler';
 import { config } from '../common/config.js';
 import logger from '../common/logger.js';
-import { database } from '../database/index.js';
-import { AIService } from './AIService.js';
+import { database } from '../database';
+import { AiService } from './ai.service';
 import { databaseConnection } from '../database/connection.js';
 import { MessageOriginUser, Message as TelegramMessage } from 'grammy/types';
-import { MessageEntity } from '@grammyjs/types/message';
-import {
-  MessageReaction,
-  PopulatedMessage,
-} from '../database/models/Message.js';
+import { MessageReaction } from '../database/models/Message.js';
 import { API_CONSTANTS } from 'grammy';
 
 interface SessionData {
@@ -26,30 +21,25 @@ type MyContext = HydrateFlavor<Context & { session: SessionData }>;
 
 export class TelegramBotService {
   private readonly bot: Bot<MyContext>;
-  private aiService: AIService;
+  private aiService: AiService;
   private botUsername: string = '';
 
   constructor() {
     this.bot = new Bot(config.telegram.apiKey);
-    this.aiService = new AIService();
+    this.aiService = new AiService();
     this.setupMiddleware();
     this.setupHandlers();
   }
 
   private async setupMiddleware(): Promise<void> {
-    // Auto-retry for network errors
     this.bot.api.config.use(autoRetry());
 
-    // Rate limiting
     this.bot.api.config.use(apiThrottler());
 
-    // Hydration for better message handling
     this.bot.use(hydrate());
 
-    // Parse mode for better formatting
     this.bot.api.config.use(parseMode('HTML'));
 
-    // Session middleware
     const adapter = new MongoDBAdapter({
       collection: databaseConnection.getDb().collection('sessions'),
     });
@@ -61,7 +51,6 @@ export class TelegramBotService {
       }),
     );
 
-    // Error handling
     this.bot.catch((err) => {
       const ctx = err.ctx;
       logger.error(
@@ -83,7 +72,6 @@ export class TelegramBotService {
       }
     });
 
-    // Logging middleware
     this.bot.use(async (ctx, next) => {
       const start = Date.now();
 
@@ -106,10 +94,9 @@ export class TelegramBotService {
   }
 
   private setupHandlers(): void {
-    // Start command (only works in private chats)
     this.bot.command('start', async (ctx) => {
       if (ctx.chat?.type !== 'private') {
-        return; // Ignore start command in groups
+        return;
       }
 
       const startMessage = `🤖 <b>Groknul Bot</b>
@@ -137,9 +124,7 @@ Have fun chatting! 🚀`;
       await ctx.reply(startMessage);
     });
 
-    // Handle all messages in groups
     this.bot.on('message', async (ctx) => {
-      // Only process messages in groups/supergroups
       if (
         !ctx.chat ||
         (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup')
@@ -154,7 +139,6 @@ Have fun chatting! 🚀`;
       }
     });
 
-    // Handle message edits
     this.bot.on('edited_message', async (ctx) => {
       if (
         !ctx.chat ||
@@ -173,7 +157,6 @@ Have fun chatting! 🚀`;
       }
     });
 
-    // Handle message reactions
     this.bot.on('message_reaction', async (ctx) => {
       if (
         !ctx.chat ||
@@ -191,22 +174,16 @@ Have fun chatting! 🚀`;
         );
       }
     });
-
-    // Handle channel posts and edited channel posts if bot is added to channels
-    this.bot.on(['channel_post', 'edited_channel_post'], async (ctx) => {
-      // For now, we'll ignore channel posts, but this can be extended
-      logger.info({ chatId: ctx.chat?.id }, 'Channel post received (ignored)');
-    });
   }
 
   private async handleMessage(ctx: MyContext): Promise<void> {
     const message = ctx.message;
+
     if (!message || !ctx.from || !ctx.chat) {
       logger.warn({ message, ctx }, 'Skipping message handling');
       return;
     }
 
-    // Save user to database
     const userModel = database.getTelegramUserModel();
     await userModel.upsertUser({
       telegramId: ctx.from.id,
@@ -218,7 +195,6 @@ Have fun chatting! 🚀`;
       languageCode: ctx.from.language_code,
     });
 
-    // Save message to database
     const messageModel = database.getMessageModel();
     await messageModel.saveMessage({
       telegramId: message.message_id,
@@ -234,7 +210,6 @@ Have fun chatting! 🚀`;
       payload: JSON.parse(JSON.stringify(ctx)),
     });
 
-    // Check if bot should respond
     if (this.shouldRespond(message, ctx.from.id)) {
       await this.generateAndSendResponse(ctx, message);
     }
@@ -242,7 +217,10 @@ Have fun chatting! 🚀`;
 
   private async handleMessageEdit(ctx: MyContext): Promise<void> {
     const editedMessage = ctx.editedMessage;
-    if (!editedMessage || !ctx.chat) return;
+
+    if (!editedMessage || !ctx.chat) {
+      return;
+    }
 
     const messageModel = database.getMessageModel();
 
@@ -271,7 +249,10 @@ Have fun chatting! 🚀`;
 
   private async handleMessageReaction(ctx: MyContext): Promise<void> {
     const messageReaction = ctx.messageReaction;
-    if (!messageReaction || !ctx.from || !ctx.chat) return;
+
+    if (!messageReaction || !ctx.from || !ctx.chat) {
+      return;
+    }
 
     logger.info(
       {
@@ -299,7 +280,6 @@ Have fun chatting! 🚀`;
         'Reaction changes detected',
       );
 
-      // Create simple reaction data objects (updateReactions will add userId and addedAt)
       type ReactionData = Omit<MessageReaction, 'userTelegramId' | 'addedAt'>;
 
       const addedReactions: ReactionData[] = [
@@ -340,25 +320,18 @@ Have fun chatting! 🚀`;
   }
 
   private shouldRespond(message: TelegramMessage, fromUserId: number): boolean {
-    // Don't respond to bot's own messages
     if (fromUserId === this.bot.botInfo.id) {
       return false;
     }
 
-    // Respond if bot is mentioned
     if (message.text && message.text.includes(`@${this.botUsername}`)) {
       return true;
     }
 
-    // Respond if replying to bot's message
-    if (
+    return !!(
       message.reply_to_message &&
       message.reply_to_message.from?.id === this.bot.botInfo.id
-    ) {
-      return true;
-    }
-
-    return false;
+    );
   }
 
   private async generateAndSendResponse(
@@ -368,33 +341,29 @@ Have fun chatting! 🚀`;
     const chatId = ctx.chat!.id;
 
     try {
-      // Get recent messages for context (now populated with user data)
       const messageModel = database.getMessageModel();
       const recentMessages = await messageModel.getRecentMessages(chatId, 500);
 
-      // Find the trigger message in our database
       const dbTriggerMessage = await messageModel.findByMessageTelegramId(
         triggerMessage.message_id,
         chatId,
       );
+
       if (!dbTriggerMessage) {
         logger.error('Trigger message not found in database');
         return;
       }
 
-      // Generate AI response
       const aiResponse = await this.aiService.generateResponse(
         recentMessages,
         dbTriggerMessage,
         this.botUsername,
       );
 
-      // Send response
       const sentMessage = await ctx.reply(aiResponse.text, {
         reply_to_message_id: triggerMessage.message_id,
       });
 
-      // Save bot's message to database
       await messageModel.saveMessage({
         telegramId: sentMessage.message_id,
         chatTelegramId: chatId,
@@ -419,14 +388,12 @@ Have fun chatting! 🚀`;
     } catch (error) {
       logger.error(error, 'Failed to generate or send AI response');
 
-      // Send error message to user
       try {
         const errorMessage = await ctx.reply(
           'Sorry, I encountered an error while generating a response. Please try again later.',
           { reply_to_message_id: triggerMessage.message_id },
         );
 
-        // Save error message to database
         const messageModel = database.getMessageModel();
         await messageModel.saveMessage({
           telegramId: errorMessage.message_id,
@@ -445,7 +412,7 @@ Have fun chatting! 🚀`;
   }
 
   private getMessageType(
-    message: any,
+    message: TelegramMessage,
   ):
     | 'text'
     | 'photo'
@@ -466,7 +433,6 @@ Have fun chatting! 🚀`;
   }
 
   async start(): Promise<void> {
-    // Get bot info
     const botInfo = await this.bot.api.getMe();
     this.botUsername = botInfo.username || '';
 
@@ -479,13 +445,11 @@ Have fun chatting! 🚀`;
       'Bot info retrieved',
     );
 
-    // Save bot's user information to the database
     await this.saveBotUserProfile(botInfo);
 
     if (config.telegram.mode === 'webhook') {
       logger.info('Starting bot in webhook mode');
 
-      // Configure webhook with allowed updates to include reactions
       try {
         await this.bot.api.setWebhook(config.telegram.webhookUrl!, {
           allowed_updates: API_CONSTANTS.ALL_UPDATE_TYPES,
@@ -496,11 +460,10 @@ Have fun chatting! 🚀`;
         logger.error(error, 'Failed to configure webhook');
       }
 
-      // Webhook will be handled by Hono server
       return;
     } else {
       logger.info('Starting bot in polling mode');
-      // Enable reaction updates for polling mode
+
       await this.bot.start({
         allowed_updates: API_CONSTANTS.ALL_UPDATE_TYPES,
       });
@@ -515,11 +478,6 @@ Have fun chatting! 🚀`;
     return this.botUsername;
   }
 
-  /**
-   * Save the bot's user profile to the database
-   * This ensures that when the bot sends messages, they can be properly
-   * linked to the bot's user profile in the database
-   */
   private async saveBotUserProfile(botInfo: any): Promise<void> {
     try {
       const userModel = database.getTelegramUserModel();

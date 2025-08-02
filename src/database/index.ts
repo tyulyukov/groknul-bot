@@ -10,16 +10,13 @@ export class Database {
   async initialize(): Promise<void> {
     const db = await databaseConnection.connect();
 
-    // Initialize collections
     const telegramUsersCollection =
       db.collection<TelegramUser>('telegramusers');
     const messagesCollection = db.collection<Message>('messages');
 
-    // Initialize models
     this.telegramUserModel = new TelegramUserModel(telegramUsersCollection);
     this.messageModel = new MessageModel(messagesCollection);
 
-    // Create indexes for better performance using model methods
     await this.createIndexes();
 
     logger.info('Database models initialized successfully');
@@ -29,7 +26,6 @@ export class Database {
     try {
       logger.info('Creating database indexes...');
 
-      // Create indexes using model methods
       await this.telegramUserModel!.createIndexes();
       await this.messageModel!.createIndexes();
 

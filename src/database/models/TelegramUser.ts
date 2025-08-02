@@ -1,4 +1,4 @@
-import { Collection } from 'mongodb';
+import { Collection, CreateIndexesOptions, IndexSpecification } from 'mongodb';
 import logger from '../../common/logger.js';
 
 export interface TelegramUserHistory {
@@ -36,7 +36,6 @@ export class TelegramUserModel {
     const now = new Date();
 
     if (existingUser) {
-      // Check if user data has changed
       const hasChanged =
         existingUser.username !== userData.username ||
         existingUser.firstName !== userData.firstName ||
@@ -45,7 +44,6 @@ export class TelegramUserModel {
         existingUser.isPremium !== userData.isPremium;
 
       if (hasChanged) {
-        // Add current data to history before updating
         const historyEntry: TelegramUserHistory = {
           username: existingUser.username,
           firstName: existingUser.firstName,
@@ -77,7 +75,6 @@ export class TelegramUserModel {
       }
       return updatedUser;
     } else {
-      // Create new user
       const newUser: TelegramUser = {
         telegramId: userData.telegramId!,
         username: userData.username,
@@ -96,25 +93,29 @@ export class TelegramUserModel {
     }
   }
 
-  /**
-   * Create database indexes for optimal query performance
-   */
   async createIndexes(): Promise<void> {
-    const indexCreations = [
-      // Primary lookup index
-      async () =>
-        this.collection.createIndex({ telegramId: 1 }, { unique: true }),
+    const indexDefinitions: {
+      keys: IndexSpecification;
+      options?: CreateIndexesOptions;
+      description: string;
+    }[] = [
+      {
+        keys: { telegramId: 1 },
+        options: { unique: true },
+        description: 'Primary lookup index',
+      },
     ];
 
-    for (const createIndex of indexCreations) {
+    for (const def of indexDefinitions) {
       try {
-        await createIndex();
-        logger.info(`Created TelegramUser index successfully`);
-      } catch (error) {
-        // Index might already exist, log but don't throw
+        await this.collection.createIndex(def.keys, def.options);
         logger.info(
+          `Created TelegramUser index successfully: ${def.description}`,
+        );
+      } catch (error) {
+        logger.error(
           error,
-          `TelegramUser index creation skipped (may already exist)`,
+          `TelegramUser index creation failed (may already exist): ${def.description}`,
         );
       }
     }
