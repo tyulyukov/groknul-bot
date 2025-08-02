@@ -28,11 +28,7 @@ export class AiService {
     botUsername: string,
   ): Promise<AIResponse> {
     try {
-      const conversationMessages = this.buildContext(
-        messages,
-        triggerMessage,
-        botUsername,
-      );
+      const conversationMessages = this.buildContext(messages, botUsername);
 
       const prompt: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         {
@@ -112,7 +108,6 @@ export class AiService {
 
   private buildContext(
     messages: PopulatedMessage[],
-    triggerMessage: PopulatedMessage,
     botUsername: string,
   ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
     // Helper functions for formatting message metadata
@@ -228,6 +223,6 @@ export class AiService {
     };
 
     // Convert to OpenAI messages format
-    return [...messages, triggerMessage].map(convertToOpenAIMessage);
+    return messages.map(convertToOpenAIMessage);
   }
 }

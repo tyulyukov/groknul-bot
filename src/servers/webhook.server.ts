@@ -53,15 +53,7 @@ export class WebhookServer {
     });
 
     this.app.onError((err, c) => {
-      logger.error(
-        {
-          error: err,
-          path: c.req.path,
-          method: c.req.method,
-        },
-        'Server error',
-      );
-
+      logger.error(err, `Server error ${c.req.path} ${c.req.method}`);
       return c.json({ error: 'Internal server error' }, 500);
     });
   }
