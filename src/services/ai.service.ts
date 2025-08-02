@@ -52,7 +52,7 @@ export class AiService {
       );
 
       const completion = await this.openai.chat.completions.create({
-        model: 'openai/gpt-4o',
+        model: 'openai/o4-mini',
         messages: prompt,
         max_completion_tokens: 1000,
         temperature: 0.9,
