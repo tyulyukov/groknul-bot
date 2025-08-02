@@ -53,7 +53,7 @@ export class AIService {
       );
 
       const completion = await this.openai.chat.completions.create({
-        model: 'deepseek/deepseek-chat-v3-0324',
+        model: 'google/gemini-2.5-flash',
         messages: prompt,
         max_completion_tokens: 1000,
         temperature: 0.7,
