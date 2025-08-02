@@ -171,9 +171,7 @@ export class AiService {
       if (msg.replyToMessage) {
         const replyUserName = formatUserDisplayName(msg.replyToMessage.user);
         const replyText = msg.replyToMessage.text || '[non-text content]';
-        parts.push(
-          `Replying to ${replyUserName}: "${replyText.substring(0, 50)}${replyText.length > 50 ? '...' : ''}"`,
-        );
+        parts.push(`Replying to ${replyUserName}: "${replyText}"`);
       }
 
       // Add reactions
@@ -223,6 +221,6 @@ export class AiService {
     };
 
     // Convert to OpenAI messages format
-    return messages.map(convertToOpenAIMessage);
+    return messages.reverse().map(convertToOpenAIMessage);
   }
 }
