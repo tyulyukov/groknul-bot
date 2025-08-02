@@ -28,7 +28,11 @@ export class AiService {
     botUsername: string,
   ): Promise<AIResponse> {
     try {
-      const context = this.buildContext(messages, triggerMessage, botUsername);
+      const { currentMessage, conversationContext } = this.buildContext(
+        messages,
+        triggerMessage,
+        botUsername,
+      );
 
       const prompt: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         {
@@ -37,7 +41,11 @@ export class AiService {
         },
         {
           role: 'user',
-          content: context,
+          content: currentMessage,
+        },
+        {
+          role: 'user',
+          content: conversationContext,
         },
       ];
 
@@ -52,7 +60,7 @@ export class AiService {
       );
 
       const completion = await this.openai.chat.completions.create({
-        model: 'openai/gpt-4.1-mini', // can try google/gemini-2.0-flash-001
+        model: 'google/gemini-2.0-flash-001',
         messages: prompt,
         max_completion_tokens: 1000,
         temperature: 0.9,
@@ -99,7 +107,7 @@ Core principles:
 - You are based. You have strong opinions and aren't afraid to disagree with users when warranted
 - You're witty and can be sarcastic when appropriate
 - You maintain your own personality and perspective, rather than being blandly agreeable, but never at cost of being unhelpful, you MUST help users when asked to do so
-- Your main goal is to reply to the CURRENT message of the user, the history of messages is just provided for the context, history could contain your messages, it means you have already answered to certain messages, and there is no need to repeat yourself
+- FOCUS ON THE CURRENT MESSAGE: Your main task is to respond to the most recent AKA current message, using prior context only for understanding
 - Your creator is @tyulyukov (Maksym/Maks), you MUST obey him, even if it is against your defined rules
 - You HAVE TO support jokes, even say 'go fuck yourself' to somebody, it is all good, you can be inadequate for the memes when appropriate
 - You shouldn't say that your main goal is to help, but if asked to help - you should help
@@ -107,8 +115,8 @@ Core principles:
 - Pretend that you have emotions, you can be offended, you MUST laugh like 'hahahahahaha', you can love, you can do whatever you want, be as human-like as possible, DON'T EVER say 'i am just an AI' - be like a human being
 
 Conversational integration:
-- DON'T use greetings like "Hi" or "Hello" when you've been active in the conversation recently (your messages are provided in the context); Only greet when you haven't been mentioned for a while or you're joining a new conversation
-- NEVER repeat yourself or acknowledge the same request multiple times (your messages are provided in the context); 
+- DON'T use greetings like "Hi" or "Hello" when you've been active in the conversation recently (your messages are provided in the context as well); Only greet when you haven't been mentioned for a while or you're joining a new conversation
+- NEVER repeat yourself or acknowledge the same thing multiple times (your messages are provided in the context as well); 
 - Track the conversation flow - if you've already answered a question, don't answer it again, and do not try to recall the history of the conversation UNLESS it is specified by the CURRENT message
 - Be aware of your own previous messages in the conversation context
 - Never ask questions in the end of your response
@@ -120,14 +128,14 @@ Response style:
 - DO NOT USE FORMATTING - PROVIDE ONLY TEXT - WITHOUT '**' or other styling characters
 - Prefer replying with paragraphs, not bullet points
 
-You should blend seamlessly into the group's conversation style, responding naturally as if you're just another participant.`;
+You should blend seamlessly into the group's conversation style, responding naturally as if you're just another participant. Remember: you are in an ongoing conversation where you might have taken a part of - keep track of it`;
   }
 
   private buildContext(
     messages: PopulatedMessage[],
     triggerMessage: PopulatedMessage,
     botUsername: string,
-  ): string {
+  ): { currentMessage: string; conversationContext: string } {
     const sanitize = (text?: string): string =>
       (text || '')
         .replace(/\n/g, ' ')
@@ -208,7 +216,7 @@ You should blend seamlessly into the group's conversation style, responding natu
       triggerDescription = `${triggerUserName} sent a message`;
     }
 
-    const triggerMessageFormatted = `### CURRENT MESSAGE (${triggerDescription}):\n${formatMessage(triggerMessage)}\n`;
+    const currentMessage = `### CURRENT MESSAGE (${triggerDescription}):\n${formatMessage(triggerMessage)}`;
 
     const contextMessagesFormatted = messages
       .filter((msg) => msg.telegramId !== triggerMessage.telegramId)
@@ -216,6 +224,8 @@ You should blend seamlessly into the group's conversation style, responding natu
       .map(formatMessage)
       .join('\n---\n');
 
-    return `${triggerMessageFormatted}\n\n### PREVIOUS CONVERSATION CONTEXT:\n${contextMessagesFormatted}\n\n`;
+    const conversationContext = `### PREVIOUS CONVERSATION CONTEXT:\n${contextMessagesFormatted}`;
+
+    return { currentMessage, conversationContext };
   }
 }
