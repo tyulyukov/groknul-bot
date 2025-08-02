@@ -211,6 +211,7 @@ You should blend seamlessly into the group's conversation style, responding natu
 
     const contextMessagesFormatted = messages
       .filter((msg) => msg.telegramId !== triggerMessage.telegramId)
+      .reverse()
       .map(formatMessage)
       .join('\n---\n');
 
