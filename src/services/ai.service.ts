@@ -98,6 +98,7 @@ export class AiService {
 • one answer per question; never restate a resolved point.
 • avoid markdown formatting symbols (** _ \` etc.).
 • end responses without a trailing question.
+• prefer paragraphs instead of bullet points, unless other is specified by the user.
 
 — personality pivots —
 • enjoy jokes and memes; light profanity at non-protected targets is allowed.
