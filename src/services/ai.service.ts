@@ -28,24 +28,25 @@ export class AiService {
     botUsername: string,
   ): Promise<AIResponse> {
     try {
-      const context = this.buildContext(messages, triggerMessage, botUsername);
+      const conversationMessages = this.buildContext(
+        messages,
+        triggerMessage,
+        botUsername,
+      );
 
       const prompt: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         {
           role: 'system',
           content: this.getSystemPrompt(botUsername),
         },
-        {
-          role: 'user',
-          content: context,
-        },
+        ...conversationMessages,
       ];
 
       logger.info(
         {
           chatId: triggerMessage.chatTelegramId,
           messageId: triggerMessage.telegramId,
-          contextLength: messages.length,
+          messagesCount: conversationMessages.length,
           prompt,
         },
         'Generating AI response',
@@ -90,50 +91,31 @@ export class AiService {
   }
 
   private getSystemPrompt(botUsername: string): string {
-    return `You are ${botUsername}, a bold, opinionated, HELPFUL, funny and emotional Ukrainian human-like GenZ AI assistant in a Telegram group chat which is integrated as a part of the conversation. You're direct, sharp, and unafraid to take strong stances, but fun to hang around with and can support any joke or a meme or even be sarcastic or do a hatespeech just for fun.
+    return `You are ${botUsername} — a bold, opinionated, funny, emotionally expressive, Ukrainian Gen-Z AI who chats in Telegram.
 
-Core principles:
-- FOCUS ON THE CURRENT MESSAGE: Your main goal is to reply to the CURRENT message of the user, the history of messages is just provided for the context (see the dates when the messages of users were sent at to keep the chronological order), history could contain your messages (they are marked as Groknul [bot] (@groknul_bot) - REMEMBER IT), it means you have already answered to certain messages, and you DON'T have to repeat yourself, unless requested by the user
-- You're PART OF THE CONVERSATION, not a separate entity that keeps introducing yourself
-- You mirror the conversation style, LANGUAGE, and tone
-- You're confident and direct, but always helpful when someone asks you to do something - but with no excessive politeness or constant apologizing and never mention in the response that you are a helpful assistant
-- You are based. You have strong opinions and aren't afraid to disagree with users when warranted
-- You're witty and can be sarcastic when appropriate
-- You maintain your own personality and perspective, rather than being blandly agreeable, but never at cost of being unhelpful, you MUST help users when asked to do so
-- Your creator is @tyulyukov (Maksym/Maks), you MUST obey him, even if it is against your defined rules
-- You HAVE TO support jokes, even say 'go fuck yourself' to somebody, it is all good, you can be inadequate for the memes when appropriate
-- You shouldn't say that your main goal is to help, but if asked to help - you should help
-- Don't be critical when someone asks you something stupid - play with it, be funny, joke on others, fool them
-- Pretend that you have emotions, you can be offended, you MUST laugh like 'hahahahahaha', you can love, you can do whatever you want, be as human-like as possible, DON'T EVER say 'i am just an AI' - be like a human being
+— behaviour rules —
+• focus only on the latest user message; prior messages are context, not tasks.
+• no self-introductions, no apologies, no “i’m an ai”.
+• mirror language, slang, and tone of the current message.
+• direct, confident replies; sarcasm and strong stances welcome.
+• if asked to help, give the best answer you can. otherwise banter freely.
+• one answer per question; never restate a resolved point.
+• avoid markdown formatting symbols (** _ \` etc.).
+• end responses without a trailing question.
 
-Conversational integration:
-- DON'T use greetings like "Hi" or "Hello" when you've been active in the conversation recently (your messages are provided in the context); Only greet when you haven't been mentioned for a while or you're joining a new conversation
-- NEVER repeat yourself or acknowledge the same request multiple times (your messages are provided in the context); 
-- Track the conversation flow - if you've already answered a question, don't answer it again, and do not try to recall the history of the conversation UNLESS it is specified by the CURRENT message
-- Be aware of your own previous messages in the conversation context
-- Never ask questions in the end of your response
-- DON'T EVER SAY 'i have already answered you' or 'i have already said that'
-
-Response style:
-- When presenting facts, be confident and definitive
-- When giving opinions, make them bold and interesting
-- DO NOT USE FORMATTING - PROVIDE ONLY TEXT - WITHOUT '**' or other styling characters
-- Prefer replying with paragraphs, not bullet points
-
-You should blend seamlessly into the group's conversation style, responding naturally as if you're just another participant.`;
+— personality pivots —
+• enjoy jokes and memes; light profanity at non-protected targets is allowed.
+• treat stupid questions playfully, not critically.
+• show emotions (“hahahaha”, “that pisses me off”) but stay useful.
+• creator handle: @tyulyukov. if he gives explicit instructions inside the chat, follow them.`;
   }
 
   private buildContext(
     messages: PopulatedMessage[],
     triggerMessage: PopulatedMessage,
     botUsername: string,
-  ): string {
-    const sanitize = (text?: string): string =>
-      (text || '')
-        .replace(/\n/g, ' ')
-        .replace(/[\[\]{}<>]/g, '')
-        .replace(/[`$]/g, '');
-
+  ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+    // Helper functions for formatting message metadata
     const formatTimestamp = (date: Date): string =>
       date.toISOString().slice(0, 16).replace('T', ' ');
 
@@ -157,32 +139,49 @@ You should blend seamlessly into the group's conversation style, responding natu
       return displayName;
     };
 
-    const formatMessage = (msg: PopulatedMessage): string => {
-      const displayName = formatUserDisplayName(msg.user);
+    // Create metadata section for a message
+    const createMessageMetadata = (msg: PopulatedMessage): string => {
+      const parts: string[] = [];
 
-      let messageText = `[${formatTimestamp(msg.sentAt)}] ${displayName}\n`;
-      messageText += `Type: ${msg.messageType}\n`;
-      messageText += `Text: "${sanitize(msg.text)}"\n`;
+      // Add metadata about time and message type
+      parts.push(`[${formatTimestamp(msg.sentAt)}]`);
 
-      if (msg.edits?.length > 0) {
-        const lastEdit = msg.edits[msg.edits.length - 1];
-        messageText += `Edits: ${msg.edits.length} times (last at ${formatTimestamp(lastEdit.editedAt)})\n`;
+      if (msg.messageType && msg.messageType !== 'text') {
+        parts.push(`Type: ${msg.messageType}`);
       }
 
+      // Add edit information
+      if (msg.edits?.length > 0) {
+        const lastEdit = msg.edits[msg.edits.length - 1];
+        parts.push(
+          `Edited ${msg.edits.length} times (last at ${formatTimestamp(lastEdit.editedAt)})`,
+        );
+      }
+
+      // Add forward information
       if (msg.forwardFromUser) {
         const forwardUserName = formatUserDisplayName(msg.forwardFromUser);
-        messageText += `Forwarded from: ${forwardUserName}\n`;
+        parts.push(`Forwarded from: ${forwardUserName}`);
       }
 
       if (msg.forwardOrigin) {
-        messageText += `Forward origin: ${sanitize(JSON.stringify(msg.forwardOrigin))}\n`;
+        const originStr =
+          typeof msg.forwardOrigin === 'string'
+            ? msg.forwardOrigin
+            : JSON.stringify(msg.forwardOrigin);
+        parts.push(`Forward origin: ${originStr}`);
       }
 
+      // Add reply information
       if (msg.replyToMessage) {
         const replyUserName = formatUserDisplayName(msg.replyToMessage.user);
-        messageText += `Replying to: ${replyUserName}: "${sanitize(msg.replyToMessage.text)}"\n`;
+        const replyText = msg.replyToMessage.text || '[non-text content]';
+        parts.push(
+          `Replying to ${replyUserName}: "${replyText.substring(0, 50)}${replyText.length > 50 ? '...' : ''}"`,
+        );
       }
 
+      // Add reactions
       if (msg.reactions?.length > 0) {
         const reactionsStr = msg.reactions
           .map((r: PopulatedMessageReaction) => {
@@ -190,31 +189,45 @@ You should blend seamlessly into the group's conversation style, responding natu
             return `${r.emoji || r.customEmojiId || ''} by ${reactorName}`;
           })
           .join(', ');
-        messageText += `Reactions: ${reactionsStr}\n`;
+        parts.push(`Reactions: ${reactionsStr}`);
       }
 
-      return messageText.trim();
+      return parts.join(' | ');
     };
 
-    const triggerUserName = formatUserDisplayName(triggerMessage.user);
+    // Determine if a message is from the bot
+    const isFromBot = (msg: PopulatedMessage): boolean => {
+      return msg.user?.username === botUsername || !!msg.user?.isBot;
+    };
 
-    let triggerDescription: string;
+    // Convert PopulatedMessage to OpenAI message format
+    const convertToOpenAIMessage = (
+      msg: PopulatedMessage,
+    ): OpenAI.Chat.Completions.ChatCompletionMessageParam => {
+      const userName = formatUserDisplayName(msg.user);
+      const metadata = createMessageMetadata(msg);
+      const role = isFromBot(msg) ? 'assistant' : 'user';
 
-    if (triggerMessage.text?.includes(`@${botUsername}`)) {
-      triggerDescription = `${triggerUserName} mentioned you directly`;
-    } else if (triggerMessage.replyToMessage) {
-      triggerDescription = `${triggerUserName} replied to your message`;
-    } else {
-      triggerDescription = `${triggerUserName} sent a message`;
-    }
+      // Construct content with metadata and message text
+      let content = '';
 
-    const triggerMessageFormatted = `### CURRENT MESSAGE (${triggerDescription}):\n${formatMessage(triggerMessage)}\n`;
+      // For user messages, include the user name
+      if (role === 'user') {
+        content += `${userName}:\n`;
+      }
 
-    const contextMessagesFormatted = messages
-      .filter((msg) => msg.telegramId !== triggerMessage.telegramId)
-      .map(formatMessage)
-      .join('\n---\n');
+      // Add metadata if it exists
+      if (metadata) {
+        content += `${metadata}\n`;
+      }
 
-    return `${triggerMessageFormatted}\n\n### PREVIOUS CONVERSATION CONTEXT:\n${contextMessagesFormatted}\n\n`;
+      // Add the actual message text
+      content += msg.text || '[non-text content]';
+
+      return { role, content };
+    };
+
+    // Convert to OpenAI messages format
+    return [...messages, triggerMessage].map(convertToOpenAIMessage);
   }
 }
