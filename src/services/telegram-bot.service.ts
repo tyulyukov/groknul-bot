@@ -6,8 +6,8 @@ import { MongoDBAdapter } from '@grammyjs/storage-mongodb';
 import { apiThrottler } from '@grammyjs/transformer-throttler';
 import { config } from '../common/config.js';
 import logger from '../common/logger.js';
-import { database } from '../database';
-import { AiService } from './ai.service';
+import { database } from '../database/index.js';
+import { AiService } from './ai.service.js';
 import { databaseConnection } from '../database/connection.js';
 import { MessageOriginUser, Message as TelegramMessage } from 'grammy/types';
 import { MessageReaction } from '../database/models/Message.js';
@@ -342,7 +342,7 @@ Have fun chatting! 🚀`;
 
     try {
       const messageModel = database.getMessageModel();
-      const recentMessages = await messageModel.getRecentMessages(chatId, 500);
+      const recentMessages = await messageModel.getRecentMessages(chatId, 200);
 
       const dbTriggerMessage = await messageModel.findByMessageTelegramId(
         triggerMessage.message_id,

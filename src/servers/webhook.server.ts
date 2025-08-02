@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { config } from '../common/config.js';
 import logger from '../common/logger.js';
-import { TelegramBotService } from '../services/telegram-bot.service';
+import { TelegramBotService } from '../services/telegram-bot.service.js';
 import { webhookCallback } from 'grammy';
 
 export class WebhookServer {

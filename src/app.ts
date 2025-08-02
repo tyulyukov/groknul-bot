@@ -1,8 +1,8 @@
 import { config } from './common/config.js';
 import logger from './common/logger.js';
-import { database } from './database';
-import { TelegramBotService } from './services/telegram-bot.service';
-import { WebhookServer } from './servers/webhook.server';
+import { database } from './database/index.js';
+import { TelegramBotService } from './services/telegram-bot.service.js';
+import { WebhookServer } from './servers/webhook.server.js';
 
 class Application {
   private telegramBotService: TelegramBotService | null = null;

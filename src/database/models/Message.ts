@@ -284,7 +284,7 @@ export class MessageModel {
 
   async getRecentMessages(
     chatId: number,
-    limit: number = 500,
+    limit: number,
   ): Promise<PopulatedMessage[]> {
     const pipeline = [
       {
