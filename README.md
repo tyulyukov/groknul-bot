@@ -1,7 +1,7 @@
 # Groknul Bot
 
 A sophisticated Telegram bot that observes group conversations, saves all messages (including edit history) and reactions to MongoDB, and generates AI-powered responses using OpenRouter's API when mentioned or replied to.
-The inspiration comes from Twitter's Grok that is deeply integrated into tweets. The bot is named after it, reading "groknul" (sounds similar to "grohnul", rus. грохнул) can be translated to 'crashed' or 'banged,' adding a playful and whimsical twist to the name, inspired by its root meaning in Russian.
+The inspiration comes from Twitter's Grok that is deeply integrated into tweets. The bot is named after it, "groknul", which sounds similar to "grohnul" (rus. грохнул) can be translated to 'crashed' or 'banged' from Russian, adding a playful and whimsical twist to the name.
 
 
 ## Features
