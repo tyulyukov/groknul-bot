@@ -12,7 +12,7 @@ import { databaseConnection } from '../database/connection.js';
 import { MessageOriginUser, Message as TelegramMessage } from 'grammy/types';
 import { MessageReaction } from '../database/models/Message.js';
 import { API_CONSTANTS } from 'grammy';
-import { escapeMarkdown } from '../utils/escape-markdown';
+import { escapeMarkdown } from '../utils/escape-markdown.js';
 
 interface SessionData {
   messageCount: number;
