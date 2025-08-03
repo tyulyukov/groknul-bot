@@ -44,13 +44,9 @@ export class AiService {
       );
 
       const completion = await this.openai.chat.completions.create({
-        model: 'openrouter/horizon-beta',
+        model: 'openai/gpt-4.1-mini', // great but expensive: openai/o4-mini | good but doesn't follow instructions: google/gemini-2.5-flash
         // @ts-expect-error Doesn't exist in OpenAI SDK but handled on the OpenRouter side as fallback models
-        models: [
-          'openai/gpt-4.1-mini',
-          'google/gemini-2.5-flash',
-          'openai/o4-mini',
-        ],
+        models: ['google/gemini-2.5-flash', 'openai/o4-mini'],
         plugins: [{ id: 'web' }],
         messages: prompt,
         max_completion_tokens: 1000,
