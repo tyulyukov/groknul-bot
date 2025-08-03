@@ -211,6 +211,7 @@ Have fun chatting! 🚀`;
     });
 
     if (this.shouldRespond(message, ctx.from.id)) {
+      await ctx.react('👀');
       await this.generateAndSendResponse(ctx, message);
     }
   }
