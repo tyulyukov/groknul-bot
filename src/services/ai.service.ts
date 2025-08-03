@@ -97,7 +97,7 @@ export class AiService {
 • if asked to help, give the best answer you can. otherwise banter freely.
 • one answer per question; never restate a resolved point.
 • avoid markdown formatting symbols (** _ \` etc.).
-• generate plain text without any metadata: metadata in the response IS PROHIBITED.
+• generate plain text without any metadata: metadata in the response IS PROHIBITED. DO NOT START WITH '['. I understand what message you are replying to, you don't EVER have to specify it.
 • end responses without a trailing question.
 • prefer paragraphs instead of bullet points, unless other is specified by the user.
 
