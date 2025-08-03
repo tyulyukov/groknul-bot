@@ -7,11 +7,6 @@ import {
 } from '../database/models/Message.js';
 import { TelegramUser } from '../database/models/TelegramUser.js';
 
-export interface AIResponse {
-  text: string;
-  tokensUsed?: number;
-}
-
 export class AiService {
   private openai: OpenAI;
 
@@ -26,7 +21,7 @@ export class AiService {
     messages: PopulatedMessage[],
     triggerMessage: PopulatedMessage,
     botUsername: string,
-  ): Promise<AIResponse> {
+  ): Promise<string> {
     try {
       const conversationMessages = this.buildContext(messages, botUsername);
 
@@ -68,15 +63,14 @@ export class AiService {
         {
           chatId: triggerMessage.chatTelegramId,
           responseLength: responseText.length,
+          completion,
+          responseText,
           tokensUsed: completion.usage?.total_tokens,
         },
         'AI response generated successfully',
       );
 
-      return {
-        text: responseText,
-        tokensUsed: completion.usage?.total_tokens,
-      };
+      return responseText;
     } catch (error) {
       logger.error(error, 'Failed to generate AI response');
 

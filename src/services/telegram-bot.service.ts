@@ -12,6 +12,7 @@ import { databaseConnection } from '../database/connection.js';
 import { MessageOriginUser, Message as TelegramMessage } from 'grammy/types';
 import { MessageReaction } from '../database/models/Message.js';
 import { API_CONSTANTS } from 'grammy';
+import { escapeMarkdown } from '../utils/escape-markdown';
 
 interface SessionData {
   messageCount: number;
@@ -361,15 +362,16 @@ Have fun chatting! 🚀`;
         this.botUsername,
       );
 
-      const sentMessage = await ctx.reply(aiResponse.text, {
+      const sentMessage = await ctx.reply(escapeMarkdown(aiResponse), {
         reply_to_message_id: triggerMessage.message_id,
+        parse_mode: 'MarkdownV2',
       });
 
       await messageModel.saveMessage({
         telegramId: sentMessage.message_id,
         chatTelegramId: chatId,
         userTelegramId: this.bot.botInfo.id,
-        text: aiResponse.text,
+        text: aiResponse,
         replyToMessageTelegramId: triggerMessage.message_id,
         sentAt: new Date(sentMessage.date * 1000),
         messageType: 'text',
@@ -380,8 +382,6 @@ Have fun chatting! 🚀`;
         {
           chatId,
           triggerMessageId: triggerMessage.message_id,
-          responseLength: aiResponse.text.length,
-          tokensUsed: aiResponse.tokensUsed,
           botMessageId: sentMessage.message_id,
         },
         'AI response sent and saved successfully',
