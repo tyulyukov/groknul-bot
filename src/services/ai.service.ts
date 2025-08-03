@@ -49,7 +49,7 @@ export class AiService {
       );
 
       const completion = await this.openai.chat.completions.create({
-        model: 'openai/gpt-4.1-mini', // good: openai/o4-mini | good but doesn't follow instructions: google/gemini-2.5-flash
+        model: 'openai/gpt-4.1-mini', // great but expensive: openai/o4-mini | good but doesn't follow instructions: google/gemini-2.5-flash
         messages: prompt,
         max_completion_tokens: 1000,
         temperature: 0.9,
