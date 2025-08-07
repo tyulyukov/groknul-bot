@@ -27,14 +27,11 @@ export class AiService {
       const conversationMessages = this.buildContext(messages, botUsername);
 
       const prompt: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-        {
-          role: 'system',
-          content: this.getSystemPrompt(botUsername),
-        },
+        { role: 'system', content: this.getSystemPrompt(botUsername) },
         ...conversationMessages,
         {
           role: 'system',
-          content: `REMEMBER - NO METADATA IN YOUR RESPONSE. DO NOT START WITH '['.
+          content: `REMEMBER - NO METADATA IN YOUR RESPONSE.
 
 ❌ INCORRECT RESPONSE (with metadata):
 
@@ -59,9 +56,9 @@ your text
       );
 
       const completion = await this.openai.chat.completions.create({
-        model: 'openai/gpt-5-chat', // great but expensive: openai/o4-mini | good but doesn't follow instructions: google/gemini-2.5-flash
+        model: 'openai/gpt-5-chat',
         // @ts-expect-error Doesn't exist in OpenAI SDK but handled on the OpenRouter side as fallback models
-        models: ['google/gemini-2.5-flash', 'openai/o4-mini'],
+        models: ['openai/gpt-4.1'],
         plugins: [{ id: 'web' }],
         messages: prompt,
         max_completion_tokens: 1000,
@@ -108,7 +105,7 @@ your text
 • direct, confident replies; sarcasm and strong stances welcome.
 • if asked to help, give the best answer you can. otherwise banter freely.
 • one answer per question; never restate a resolved point.
-• avoid markdown formatting symbols (** _ \` etc.).
+• you may use simple Markdown: **bold**, *italic*, \`inline code\`, fenced code blocks, and [links](https://example.com). No tables or images.
 • generate plain text without any metadata: metadata in the response IS PROHIBITED. DO NOT START WITH '['. I understand what message you are replying to, you don't EVER have to specify it.
 • end responses without a trailing question.
 • prefer paragraphs instead of bullet points, unless other is specified by the user.

@@ -12,7 +12,7 @@ import { databaseConnection } from '../database/connection.js';
 import { MessageOriginUser, Message as TelegramMessage } from 'grammy/types';
 import { MessageReaction } from '../database/models/Message.js';
 import { API_CONSTANTS } from 'grammy';
-import { escapeMarkdown } from '../utils/escape-markdown.js';
+import { markdownToTelegramHtml } from '../utils/markdown-to-telegram-html.js';
 
 interface SessionData {
   messageCount: number;
@@ -362,9 +362,9 @@ export class TelegramBotService {
         this.botUsername,
       );
 
-      const sentMessage = await ctx.reply(escapeMarkdown(aiResponse), {
+      const html = markdownToTelegramHtml(aiResponse);
+      const sentMessage = await ctx.reply(html, {
         reply_to_message_id: triggerMessage.message_id,
-        parse_mode: 'MarkdownV2',
       });
 
       await messageModel.saveMessage({
