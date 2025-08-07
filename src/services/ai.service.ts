@@ -6,7 +6,7 @@ import {
   PopulatedMessageReaction,
 } from '../database/models/Message.js';
 import { TelegramUser } from '../database/models/TelegramUser.js';
-import { getStartMessage } from './telegram-bot.service';
+import { getStartMessage } from './telegram-bot.service.js';
 
 export class AiService {
   private openai: OpenAI;
