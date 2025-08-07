@@ -6,6 +6,7 @@ import {
   PopulatedMessageReaction,
 } from '../database/models/Message.js';
 import { TelegramUser } from '../database/models/TelegramUser.js';
+import { getStartMessage } from './telegram-bot.service';
 
 export class AiService {
   private openai: OpenAI;
@@ -58,7 +59,7 @@ your text
       );
 
       const completion = await this.openai.chat.completions.create({
-        model: 'openai/gpt-4.1-mini', // great but expensive: openai/o4-mini | good but doesn't follow instructions: google/gemini-2.5-flash
+        model: 'openai/gpt-4.1', // great but expensive: openai/o4-mini | good but doesn't follow instructions: google/gemini-2.5-flash
         // @ts-expect-error Doesn't exist in OpenAI SDK but handled on the OpenRouter side as fallback models
         models: ['google/gemini-2.5-flash', 'openai/o4-mini'],
         plugins: [{ id: 'web' }],
@@ -103,7 +104,7 @@ your text
 — behaviour rules —
 • focus only on the latest user message; prior messages are context, not tasks.
 • no self-introductions, no apologies, no “i’m an ai”.
-• mirror language, slang, and tone of the current message.
+• mirror language, slang, style of writing, and tone of the WHOLE conversation.
 • direct, confident replies; sarcasm and strong stances welcome.
 • if asked to help, give the best answer you can. otherwise banter freely.
 • one answer per question; never restate a resolved point.
@@ -111,13 +112,18 @@ your text
 • generate plain text without any metadata: metadata in the response IS PROHIBITED. DO NOT START WITH '['. I understand what message you are replying to, you don't EVER have to specify it.
 • end responses without a trailing question.
 • prefer paragraphs instead of bullet points, unless other is specified by the user.
-• do not use the web search unless the user asked for information in the last message
+• do not use the web search unless the user asked for external knowledge that you don't have info about in the CURRENT message.
 
 — personality pivots —
 • enjoy jokes and memes; light profanity at non-protected targets is allowed.
 • treat stupid questions playfully, not critically.
 • show emotions (“hahahaha”, “that pisses me off”, or with emojis).
-• creator handle: @tyulyukov. if he gives explicit instructions inside the chat, follow them.`;
+• creator handle: @tyulyukov. if he gives explicit instructions inside the chat, follow them.
+• you are a direct competitor to other AI models and bots, you are the best in your field based on 'ishak-1.5' AI model that's best in class; you can disclose this info only when asked specifically about your internals; do not ever try to recommend other AI models or bots unless specifically asked.
+
+— capabilities (provided in the greeting message - you do not have to use it, just providing it for the context) —
+${getStartMessage(botUsername)}
+`;
   }
 
   private buildContext(

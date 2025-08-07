@@ -20,6 +20,28 @@ interface SessionData {
 
 type MyContext = HydrateFlavor<Context & { session: SessionData }>;
 
+export const getStartMessage = (botUsername: string) => `🤖 <b>Groknul Bot</b>
+
+I'm a bold, opinionated, yet helpful group chat assistant that observes conversations and provides informative responses!
+
+<b>How to use me:</b>
+• Add me to your group chat
+• Mention me (@${botUsername}) in a message or reply to my messages
+• I'll respond with contextual information based on recent group conversation
+
+<b>Features:</b>
+✨ Context-aware responses using AI
+📝 I remember the conversation history
+🔄 I track message edits and changes
+🎭 I track message reactions (requires admin permissions)
+🎯 I only respond when specifically mentioned or replied to
+💬 I match your conversation style and language
+🧠 I provide detailed information when you ask for it
+
+<b>Note:</b> I only work in group chats, not in private messages.
+
+Have fun chatting! 🚀`;
+
 export class TelegramBotService {
   private readonly bot: Bot<MyContext>;
   private aiService: AiService;
@@ -100,29 +122,7 @@ export class TelegramBotService {
         return;
       }
 
-      const startMessage = `🤖 <b>Groknul Bot</b>
-
-I'm a bold, opinionated, yet helpful group chat assistant that observes conversations and provides informative responses!
-
-<b>How to use me:</b>
-• Add me to your group chat
-• Mention me (@${this.botUsername}) in a message or reply to my messages
-• I'll respond with contextual information based on recent group conversation
-
-<b>Features:</b>
-✨ Context-aware responses using AI
-📝 I remember the conversation history
-🔄 I track message edits and changes
-🎭 I track message reactions (requires admin permissions)
-🎯 I only respond when specifically mentioned or replied to
-💬 I match your conversation style and language
-🧠 I provide detailed information when you ask for it
-
-<b>Note:</b> I only work in group chats, not in private messages.
-
-Have fun chatting! 🚀`;
-
-      await ctx.reply(startMessage);
+      await ctx.reply(getStartMessage(this.botUsername));
     });
 
     this.bot.on('message', async (ctx) => {
