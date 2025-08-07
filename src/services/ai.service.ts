@@ -59,7 +59,7 @@ your text
       );
 
       const completion = await this.openai.chat.completions.create({
-        model: 'openai/gpt-4.1', // great but expensive: openai/o4-mini | good but doesn't follow instructions: google/gemini-2.5-flash
+        model: 'openai/gpt-5-chat', // great but expensive: openai/o4-mini | good but doesn't follow instructions: google/gemini-2.5-flash
         // @ts-expect-error Doesn't exist in OpenAI SDK but handled on the OpenRouter side as fallback models
         models: ['google/gemini-2.5-flash', 'openai/o4-mini'],
         plugins: [{ id: 'web' }],
