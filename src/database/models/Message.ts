@@ -30,6 +30,7 @@ export interface Message {
   userTelegramId: number; // Reference to TelegramUser.telegramId
   text?: string;
   replyToMessageTelegramId?: number; // Reference to Message.telegramId
+  replyQuoteText?: string;
   sentAt: Date;
   editDate?: Date;
   edits: MessageEdit[];
@@ -185,6 +186,7 @@ export class MessageModel {
       userTelegramId: messageData.userTelegramId!,
       text: messageData.text,
       replyToMessageTelegramId: messageData.replyToMessageTelegramId,
+      replyQuoteText: messageData.replyQuoteText,
       sentAt: messageData.sentAt || now,
       editDate: messageData.editDate,
       edits: [],

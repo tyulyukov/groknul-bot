@@ -184,11 +184,14 @@ ${getStartMessage(botUsername)}
         parts.push(`Forward origin: ${originStr}`);
       }
 
-      // Add reply information
+      // Add reply information: include full replied-to message text, and then the selected quote if present
       if (msg.replyToMessage) {
         const replyUserName = formatUserDisplayName(msg.replyToMessage.user);
-        const replyText = msg.replyToMessage.text || '[non-text content]';
-        parts.push(`Replying to ${replyUserName}: "${replyText}"`);
+        const replyFullText = msg.replyToMessage.text || '[non-text content]';
+        parts.push(`Replying to ${replyUserName}: "${replyFullText}"`);
+        if (msg.replyQuoteText && msg.replyQuoteText.trim().length > 0) {
+          parts.push(`Quote: "${msg.replyQuoteText.trim()}"`);
+        }
       }
 
       // Add reactions

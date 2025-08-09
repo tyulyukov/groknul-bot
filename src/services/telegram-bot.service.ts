@@ -197,12 +197,15 @@ export class TelegramBotService {
     });
 
     const messageModel = database.getMessageModel();
+    const quote = message.quote;
+
     await messageModel.saveMessage({
       telegramId: message.message_id,
       chatTelegramId: ctx.chat.id,
       userTelegramId: ctx.from.id,
       text: message.text,
       replyToMessageTelegramId: message.reply_to_message?.message_id,
+      replyQuoteText: quote?.text,
       sentAt: new Date(message.date * 1000),
       messageType: this.getMessageType(message),
       forwardOrigin: message.forward_origin,
