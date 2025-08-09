@@ -2,23 +2,23 @@ import { Collection, CreateIndexesOptions, IndexSpecification } from 'mongodb';
 import logger from '../../common/logger.js';
 
 export interface TelegramUserHistory {
-  username?: string;
-  firstName?: string;
-  lastName?: string;
-  languageCode?: string;
-  isPremium?: boolean;
+  username?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  languageCode?: string | null;
+  isPremium?: boolean | null;
   timestamp: Date;
 }
 
 export interface TelegramUser {
   _id?: string;
   telegramId: number;
-  username?: string;
-  firstName?: string;
-  lastName?: string;
+  username?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
   isBot: boolean;
   isPremium?: boolean;
-  languageCode?: string;
+  languageCode?: string | null;
   history: TelegramUserHistory[];
   createdAt: Date;
   updatedAt: Date;
@@ -36,12 +36,22 @@ export class TelegramUserModel {
     const now = new Date();
 
     if (existingUser) {
+      const normalizeString = (value?: string | null): string =>
+        (value ?? '').trim();
+      const normalizeBoolean = (value?: boolean | null): boolean =>
+        value === true;
+
       const hasChanged =
-        existingUser.username !== userData.username ||
-        existingUser.firstName !== userData.firstName ||
-        existingUser.lastName !== userData.lastName ||
-        existingUser.languageCode !== userData.languageCode ||
-        existingUser.isPremium !== userData.isPremium;
+        normalizeString(existingUser.username) !==
+          normalizeString(userData.username) ||
+        normalizeString(existingUser.firstName) !==
+          normalizeString(userData.firstName) ||
+        normalizeString(existingUser.lastName) !==
+          normalizeString(userData.lastName) ||
+        normalizeString(existingUser.languageCode) !==
+          normalizeString(userData.languageCode) ||
+        normalizeBoolean(existingUser.isPremium) !==
+          normalizeBoolean(userData.isPremium);
 
       if (hasChanged) {
         const historyEntry: TelegramUserHistory = {
@@ -57,11 +67,11 @@ export class TelegramUserModel {
           { telegramId: userData.telegramId },
           {
             $set: {
-              username: userData.username,
-              firstName: userData.firstName,
-              lastName: userData.lastName,
-              isPremium: userData.isPremium,
-              languageCode: userData.languageCode,
+              username: userData.username ?? null,
+              firstName: userData.firstName ?? null,
+              lastName: userData.lastName ?? null,
+              isPremium: (userData.isPremium ?? false) === true,
+              languageCode: userData.languageCode ?? null,
               updatedAt: now,
             },
             $push: { history: historyEntry },
@@ -77,12 +87,12 @@ export class TelegramUserModel {
     } else {
       const newUser: TelegramUser = {
         telegramId: userData.telegramId!,
-        username: userData.username,
-        firstName: userData.firstName,
-        lastName: userData.lastName,
+        username: userData.username ?? null,
+        firstName: userData.firstName ?? null,
+        lastName: userData.lastName ?? null,
         isBot: userData.isBot || false,
-        isPremium: userData.isPremium,
-        languageCode: userData.languageCode,
+        isPremium: (userData.isPremium ?? false) === true,
+        languageCode: userData.languageCode ?? null,
         history: [],
         createdAt: now,
         updatedAt: now,
