@@ -1,5 +1,6 @@
 import { Collection, CreateIndexesOptions, IndexSpecification } from 'mongodb';
 import { TelegramUser } from './TelegramUser.js';
+import { MessageType } from '../../common/message-types.js';
 import logger from '../../common/logger.js';
 
 export interface MessageEdit {
@@ -29,21 +30,14 @@ export interface Message {
   chatTelegramId: number;
   userTelegramId: number; // Reference to TelegramUser.telegramId
   text?: string;
+  fileName?: string;
   replyToMessageTelegramId?: number; // Reference to Message.telegramId
   replyQuoteText?: string;
   sentAt: Date;
   editDate?: Date;
   edits: MessageEdit[];
   reactions: MessageReaction[];
-  messageType:
-    | 'text'
-    | 'photo'
-    | 'video'
-    | 'document'
-    | 'sticker'
-    | 'voice'
-    | 'audio'
-    | 'other';
+  messageType: MessageType;
   forwardOrigin?: unknown;
   forwardFromUserTelegramId?: number; // Reference to TelegramUser.telegramId
   payload: unknown;
@@ -185,6 +179,7 @@ export class MessageModel {
       chatTelegramId: messageData.chatTelegramId!,
       userTelegramId: messageData.userTelegramId!,
       text: messageData.text,
+      fileName: messageData.fileName,
       replyToMessageTelegramId: messageData.replyToMessageTelegramId,
       replyQuoteText: messageData.replyQuoteText,
       sentAt: messageData.sentAt || now,

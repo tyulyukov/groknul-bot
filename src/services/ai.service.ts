@@ -162,6 +162,10 @@ ${getStartMessage(botUsername)}
         parts.push(`Type: ${msg.messageType}`);
       }
 
+      if (msg.fileName) {
+        parts.push(`File: ${msg.fileName}`);
+      }
+
       // Add edit information
       if (msg.edits?.length > 0) {
         const lastEdit = msg.edits[msg.edits.length - 1];

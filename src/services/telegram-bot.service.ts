@@ -13,6 +13,7 @@ import { MessageOriginUser, Message as TelegramMessage } from 'grammy/types';
 import { MessageReaction } from '../database/models/Message.js';
 import { API_CONSTANTS } from 'grammy';
 import { markdownToTelegramHtml } from '../utils/markdown-to-telegram-html.js';
+import { MESSAGE_TYPE, MessageType } from '../common/message-types.js';
 
 interface SessionData {
   messageCount: number;
@@ -199,15 +200,18 @@ export class TelegramBotService {
     const messageModel = database.getMessageModel();
     const quote = message.quote;
 
+    const derived = this.deriveContentFields(message);
+
     await messageModel.saveMessage({
       telegramId: message.message_id,
       chatTelegramId: ctx.chat.id,
       userTelegramId: ctx.from.id,
-      text: message.text,
+      text: derived.text,
+      fileName: derived.fileName,
       replyToMessageTelegramId: message.reply_to_message?.message_id,
       replyQuoteText: quote?.text,
       sentAt: new Date(message.date * 1000),
-      messageType: this.getMessageType(message),
+      messageType: derived.messageType,
       forwardOrigin: message.forward_origin,
       forwardFromUserTelegramId: (message.forward_origin as MessageOriginUser)
         ?.sender_user?.id,
@@ -329,7 +333,9 @@ export class TelegramBotService {
       return false;
     }
 
-    if (message.text && message.text.includes(`@${this.botUsername}`)) {
+    const { text } = this.deriveContentFields(message);
+
+    if (text && text.includes(`@${this.botUsername}`)) {
       return true;
     }
 
@@ -415,25 +421,43 @@ export class TelegramBotService {
     }
   }
 
-  private getMessageType(
-    message: TelegramMessage,
-  ):
-    | 'text'
-    | 'photo'
-    | 'video'
-    | 'document'
-    | 'sticker'
-    | 'voice'
-    | 'audio'
-    | 'other' {
-    if (message.text) return 'text';
-    if (message.photo) return 'photo';
-    if (message.video) return 'video';
-    if (message.document) return 'document';
-    if (message.sticker) return 'sticker';
-    if (message.voice) return 'voice';
-    if (message.audio) return 'audio';
-    return 'other';
+  private getMessageType(message: TelegramMessage): MessageType {
+    if (message.text) return MESSAGE_TYPE.TEXT;
+    if (message.photo) return MESSAGE_TYPE.PHOTO;
+    if (message.video) return MESSAGE_TYPE.VIDEO;
+    if (message.video_note) return MESSAGE_TYPE.VIDEO_NOTE;
+    if (message.document) return MESSAGE_TYPE.DOCUMENT;
+    if (message.sticker) return MESSAGE_TYPE.STICKER;
+    if (message.voice) return MESSAGE_TYPE.VOICE;
+    if (message.audio) return MESSAGE_TYPE.AUDIO;
+    return MESSAGE_TYPE.OTHER;
+  }
+
+  private deriveContentFields(message: TelegramMessage): {
+    text?: string;
+    fileName?: string;
+    messageType: MessageType;
+  } {
+    const messageType = this.getMessageType(message);
+    let text: string | undefined = message.text ?? undefined;
+    let fileName: string | undefined = undefined;
+
+    if (message.photo) {
+      text = message.caption ?? text;
+    }
+    if (message.video) {
+      text = message.caption ?? text;
+      fileName = message.video.file_name ?? undefined;
+    }
+    if (message.document) {
+      text = message.caption ?? text;
+      fileName = message.document.file_name ?? undefined;
+    }
+    if (message.video_note) {
+      text = message.caption ?? text;
+    }
+
+    return { text, fileName, messageType };
   }
 
   async start(): Promise<void> {
