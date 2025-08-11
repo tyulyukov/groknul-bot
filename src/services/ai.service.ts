@@ -27,7 +27,7 @@ export class AiService {
       const completion = await this.openai.chat.completions.create({
         model: 'openai/gpt-5-mini',
         // @ts-expect-error OpenRouter pass-through for disabling reasoning
-        reasoning: { enabled: false },
+        reasoning: { effort: 'low' },
         messages: [
           {
             role: 'system',
@@ -42,7 +42,7 @@ export class AiService {
           },
         ],
         temperature: 0.2,
-        max_completion_tokens: 150,
+        max_completion_tokens: 500,
         top_p: 0.9,
       });
 
