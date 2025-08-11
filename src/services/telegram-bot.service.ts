@@ -218,8 +218,61 @@ export class TelegramBotService {
       payload: JSON.parse(JSON.stringify(ctx)),
     });
 
+    // If message contains a photo (or a document that is a photo), analyze it and store concise context
+    try {
+      const shouldAnalyzePhoto =
+        !!message.photo ||
+        (message.document && message.document.mime_type?.startsWith('image/'));
+      if (shouldAnalyzePhoto) {
+        // pick only one image: for photo use the largest size; for document use its file_id
+        let selectedFileId: string | null = null;
+        if (message.photo && message.photo.length > 0) {
+          const largestPhoto = message.photo[message.photo.length - 1];
+          selectedFileId = largestPhoto.file_id;
+        } else if (
+          message.document &&
+          message.document.mime_type?.startsWith('image/')
+        ) {
+          selectedFileId = message.document.file_id;
+        }
+
+        if (selectedFileId) {
+          try {
+            const file = await ctx.api.getFile(selectedFileId);
+            if (file.file_path) {
+              const url = `https://api.telegram.org/file/bot${config.telegram.apiKey}/${file.file_path}`;
+              // Download the image and convert to base64 data URL
+              const resp = await fetch(url);
+              if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+              const contentType =
+                resp.headers.get('content-type') || 'image/jpeg';
+              const arrayBuffer = await resp.arrayBuffer();
+              const base64 = Buffer.from(arrayBuffer).toString('base64');
+              const dataUrl = `data:${contentType};base64,${base64}`;
+
+              const contextSummary = await this.aiService.analyzeImage(dataUrl);
+              if (contextSummary && contextSummary.trim().length > 0) {
+                await messageModel.updateMessageContext(
+                  message.message_id,
+                  ctx.chat.id,
+                  contextSummary.trim(),
+                );
+              }
+            }
+          } catch (error) {
+            logger.error(
+              { error, selectedFileId },
+              'Failed to analyze selected Telegram image',
+            );
+          }
+        }
+      }
+    } catch (error) {
+      logger.error(error, 'Failed to analyze image and store context');
+    }
+
     if (this.shouldRespond(message, ctx.from.id)) {
-      await ctx.react('👀');
+      await ctx.react('✍');
       await this.generateAndSendResponse(ctx, message);
     }
   }

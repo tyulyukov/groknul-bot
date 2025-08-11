@@ -30,6 +30,7 @@ export interface Message {
   chatTelegramId: number;
   userTelegramId: number; // Reference to TelegramUser.telegramId
   text?: string;
+  context?: string;
   fileName?: string;
   replyToMessageTelegramId?: number; // Reference to Message.telegramId
   replyQuoteText?: string;
@@ -179,6 +180,7 @@ export class MessageModel {
       chatTelegramId: messageData.chatTelegramId!,
       userTelegramId: messageData.userTelegramId!,
       text: messageData.text,
+      context: messageData.context,
       fileName: messageData.fileName,
       replyToMessageTelegramId: messageData.replyToMessageTelegramId,
       replyQuoteText: messageData.replyQuoteText,
@@ -196,6 +198,18 @@ export class MessageModel {
 
     await this.collection.insertOne(newMessage);
     return newMessage;
+  }
+
+  async updateMessageContext(
+    messageTelegramId: number,
+    chatTelegramId: number,
+    context: string,
+  ): Promise<void> {
+    const now = new Date();
+    await this.collection.updateOne(
+      { telegramId: messageTelegramId, chatTelegramId },
+      { $set: { context, updatedAt: now } },
+    );
   }
 
   async editMessage(

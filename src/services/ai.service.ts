@@ -18,6 +18,36 @@ export class AiService {
     });
   }
 
+  async analyzeImage(imageBase64DataUrl: string): Promise<string> {
+    try {
+      const completion = await this.openai.chat.completions.create({
+        model: 'openai/gpt-5-mini',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Describe the image briefly in 1-3 concise sentences. Extract any clearly visible text verbatim if short. Focus on the main objects, actions, and any relevant context for a chat conversation. Avoid speculation.',
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'image_url', image_url: { url: imageBase64DataUrl } },
+            ],
+          },
+        ],
+        temperature: 0.2,
+        max_completion_tokens: 150,
+        top_p: 0.9,
+      });
+
+      const summary = completion.choices[0]?.message?.content?.trim();
+      return summary || '';
+    } catch (error) {
+      logger.error(error, 'Image analysis failed');
+      return '';
+    }
+  }
+
   async generateResponse(
     messages: PopulatedMessage[],
     triggerMessage: PopulatedMessage,
@@ -240,6 +270,11 @@ ${getStartMessage(botUsername)}
 
       // Add the actual message text
       content += msg.text || '[non-text content]';
+
+      // If we have extracted visual context, append it for clarity
+      if (msg.context && msg.context.trim().length > 0) {
+        content += `\nContext: ${msg.context.trim()}`;
+      }
 
       return { role, content };
     };
