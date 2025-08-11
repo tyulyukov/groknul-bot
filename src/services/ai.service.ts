@@ -20,6 +20,7 @@ export class AiService {
 
   async analyzeImage(imageBase64DataUrl: string): Promise<string> {
     try {
+      logger.info({ contentTypePrefix: imageBase64DataUrl.slice(0, 30) }, 'Starting image summarization');
       const completion = await this.openai.chat.completions.create({
         model: 'openai/gpt-5-mini',
         messages: [
@@ -41,6 +42,15 @@ export class AiService {
       });
 
       const summary = completion.choices[0]?.message?.content?.trim();
+      logger.info(
+        {
+          completion,
+          summary,
+          summaryLength: summary?.length || 0,
+          tokensUsed: completion.usage?.total_tokens,
+        },
+        'Image summarization completed',
+      );
       return summary || '';
     } catch (error) {
       logger.error(error, 'Image analysis failed');

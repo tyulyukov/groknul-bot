@@ -224,6 +224,17 @@ export class TelegramBotService {
         !!message.photo ||
         (message.document && message.document.mime_type?.startsWith('image/'));
       if (shouldAnalyzePhoto) {
+        logger.info(
+          {
+            chatId: ctx.chat.id,
+            messageId: message.message_id,
+            hasPhoto: !!message.photo,
+            hasImageDocument:
+              !!message.document &&
+              !!message.document.mime_type?.startsWith('image/'),
+          },
+          'Image content detected; starting summarization',
+        );
         // pick only one image: for photo use the largest size; for document use its file_id
         let selectedFileId: string | null = null;
         if (message.photo && message.photo.length > 0) {
@@ -247,18 +258,53 @@ export class TelegramBotService {
                 : 'image/jpeg';
 
               // Download the image and convert to base64 data URL
+              logger.info(
+                {
+                  chatId: ctx.chat.id,
+                  messageId: message.message_id,
+                  filePath: file.file_path,
+                  mimeType,
+                },
+                'Downloading image for analysis',
+              );
               const resp = await fetch(url);
               if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
               const arrayBuffer = await resp.arrayBuffer();
               const base64 = Buffer.from(arrayBuffer).toString('base64');
               const dataUrl = `data:${mimeType};base64,${base64}`;
 
+              logger.info(
+                {
+                  chatId: ctx.chat.id,
+                  messageId: message.message_id,
+                  imageBytes: base64.length * 0.75, // rough bytes estimation
+                  base64Length: base64.length,
+                },
+                'Image downloaded and encoded; invoking vision model',
+              );
               const contextSummary = await this.aiService.analyzeImage(dataUrl);
+              logger.info(
+                {
+                  chatId: ctx.chat.id,
+                  messageId: message.message_id,
+                  summaryPresent: !!contextSummary,
+                  summaryLength: contextSummary?.length || 0,
+                  summaryPreview: contextSummary?.slice(0, 200),
+                },
+                'Vision model returned summary',
+              );
               if (contextSummary && contextSummary.trim().length > 0) {
                 await messageModel.updateMessageContext(
                   message.message_id,
                   ctx.chat.id,
                   contextSummary.trim(),
+                );
+                logger.info(
+                  {
+                    chatId: ctx.chat.id,
+                    messageId: message.message_id,
+                  },
+                  'Stored image context summary in DB',
                 );
               }
             }
