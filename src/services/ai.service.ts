@@ -20,9 +20,14 @@ export class AiService {
 
   async analyzeImage(imageBase64DataUrl: string): Promise<string> {
     try {
-      logger.info({ contentTypePrefix: imageBase64DataUrl.slice(0, 30) }, 'Starting image summarization');
+      logger.info(
+        { contentTypePrefix: imageBase64DataUrl.slice(0, 30) },
+        'Starting image summarization',
+      );
       const completion = await this.openai.chat.completions.create({
         model: 'openai/gpt-5-mini',
+        // @ts-expect-error OpenRouter pass-through for disabling reasoning
+        reasoning: { enabled: false },
         messages: [
           {
             role: 'system',
