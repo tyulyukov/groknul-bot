@@ -241,14 +241,17 @@ export class TelegramBotService {
             const file = await ctx.api.getFile(selectedFileId);
             if (file.file_path) {
               const url = `https://api.telegram.org/file/bot${config.telegram.apiKey}/${file.file_path}`;
+              // Determine MIME type based on Telegram metadata: documents have mime_type; photos default to JPEG
+              const mimeType = message.document?.mime_type?.startsWith('image/')
+                ? message.document.mime_type
+                : 'image/jpeg';
+
               // Download the image and convert to base64 data URL
               const resp = await fetch(url);
               if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-              const contentType =
-                resp.headers.get('content-type') || 'image/jpeg';
               const arrayBuffer = await resp.arrayBuffer();
               const base64 = Buffer.from(arrayBuffer).toString('base64');
-              const dataUrl = `data:${contentType};base64,${base64}`;
+              const dataUrl = `data:${mimeType};base64,${base64}`;
 
               const contextSummary = await this.aiService.analyzeImage(dataUrl);
               if (contextSummary && contextSummary.trim().length > 0) {
