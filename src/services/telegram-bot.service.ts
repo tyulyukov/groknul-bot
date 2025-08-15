@@ -183,12 +183,15 @@ export class TelegramBotService {
     const messageModel = database.getMessageModel();
     const summaryModel = database.getSummaryModel();
 
+    logger.info({ chatId }, 'Ensuring summaries start');
+
     // Level 0: summarize every 200 messages into one summary block
     const totalMessages = await messageModel.countMessages(chatId);
     const existingLevel0Count = await summaryModel.getCount(chatId, 0);
     const requiredLevel0Blocks = Math.floor(totalMessages / 200);
 
     for (let i = existingLevel0Count; i < requiredLevel0Blocks; i++) {
+      logger.info({ chatId, level: 0, index: i }, 'Preparing level-0 batch summarization');
       const batch = await messageModel.getMessagesAscending(chatId, i * 200, 200);
       if (batch.length === 0) break;
       const labeled = batch.map((msg, idx) => {
@@ -200,6 +203,7 @@ export class TelegramBotService {
         return `${label} | ${ts} | ${user}: ${text}`;
       });
       const instruction = 'Summarize the following 200 chronological chat messages into a compact, information-dense paragraph or two. Include main topics, key decisions, answers, and unresolved questions. Keep most relevant names. Avoid quoting unless essential.';
+      logger.info({ chatId, level: 0, index: i, labeledPreview: labeled[0]?.slice(0, 160) }, 'Invoking summarizeText for level-0');
       const summary = await this.aiService.summarizeText(labeled, instruction);
 
       await summaryModel.upsertSummary({
@@ -224,6 +228,7 @@ export class TelegramBotService {
       const requiredHigherBlocks = Math.floor(lowerCount / 200);
 
       for (let i = existingHigherCount; i < requiredHigherBlocks; i++) {
+        logger.info({ chatId, level, index: i }, 'Preparing higher-level summarization');
         const range = await summaryModel.getRangeByLevelAscending(
           chatId,
           lowerLevel,
@@ -233,6 +238,7 @@ export class TelegramBotService {
         if (range.length === 0) break;
         const labeled = range.map((s, idx) => `Block ${idx + 1}: ${s.summary}`);
         const instruction = 'Summarize these 200 summaries into a compact overview that preserves chronology and the most critical developments, decisions, conclusions, and ongoing threads. Keep it brief yet comprehensive.';
+        logger.info({ chatId, level, index: i, labeledFirstPreview: labeled[0]?.slice(0, 160) }, 'Invoking summarizeText for higher level');
         const summary = await this.aiService.summarizeText(labeled, instruction);
 
         await summaryModel.upsertSummary({
@@ -248,6 +254,8 @@ export class TelegramBotService {
 
       level += 1;
     }
+
+    logger.info({ chatId }, 'Ensuring summaries complete');
   }
 
   private async handleMessage(ctx: MyContext): Promise<void> {
@@ -433,11 +441,6 @@ export class TelegramBotService {
     } catch (error) {
       logger.error(error, 'Failed to track message edit');
     }
-
-    // Edits may change summaries; maintain summaries in background
-    this.ensureSummaries(ctx.chat!.id).catch((error) =>
-      logger.error({ error, chatId: ctx.chat!.id }, 'Failed to maintain summaries after edit'),
-    );
   }
 
   private async handleMessageReaction(ctx: MyContext): Promise<void> {
@@ -510,11 +513,6 @@ export class TelegramBotService {
     } catch (error) {
       logger.error(error, 'Failed to track message reaction');
     }
-
-    // Reactions may affect summarization relevance; maintain summaries in background
-    this.ensureSummaries(ctx.chat!.id).catch((error) =>
-      logger.error({ error, chatId: ctx.chat!.id }, 'Failed to maintain summaries after reaction'),
-    );
   }
 
   private shouldRespond(message: TelegramMessage, fromUserId: number): boolean {

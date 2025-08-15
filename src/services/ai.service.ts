@@ -20,6 +20,16 @@ export class AiService {
 
   async summarizeText(blocks: string[], instruction: string): Promise<string> {
     const content = blocks.join('\n\n');
+    logger.info(
+      {
+        blocksCount: blocks.length,
+        instructionPreview: instruction.slice(0, 120),
+        contentPreview: content.slice(0, 200),
+      },
+      'Starting text summarization',
+    );
+
+    const startedAt = Date.now();
     const completion = await this.openai.chat.completions.create({
       model: 'openai/gpt-5-mini',
       // @ts-expect-error OpenRouter pass-through for disabling reasoning
@@ -36,8 +46,18 @@ export class AiService {
       max_completion_tokens: 800,
       top_p: 0.9,
     });
-
-    return completion.choices[0]?.message?.content?.trim() || '';
+    const durationMs = Date.now() - startedAt;
+    const summary = completion.choices[0]?.message?.content?.trim() || '';
+    logger.info(
+      {
+        durationMs,
+        tokensUsed: completion.usage?.total_tokens,
+        summaryLength: summary.length,
+        summaryPreview: summary.slice(0, 200),
+      },
+      'Text summarization completed',
+    );
+    return summary;
   }
 
   async analyzeImage(imageBase64DataUrl: string): Promise<string> {
