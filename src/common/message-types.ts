@@ -1,5 +1,6 @@
 export const MESSAGE_TYPE = {
   TEXT: 'text',
+  POLL: 'poll',
   PHOTO: 'photo',
   VIDEO: 'video',
   VIDEO_NOTE: 'video_note',

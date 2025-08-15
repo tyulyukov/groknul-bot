@@ -9,7 +9,7 @@ import logger from '../common/logger.js';
 import { database } from '../database/index.js';
 import { AiService } from './ai.service.js';
 import { databaseConnection } from '../database/connection.js';
-import { MessageOriginUser, Message as TelegramMessage } from 'grammy/types';
+import { MessageOriginUser, Message as TelegramMessage, Poll as TelegramPoll } from 'grammy/types';
 import { MessageReaction } from '../database/models/Message.js';
 import { API_CONSTANTS } from 'grammy';
 import { markdownToTelegramHtml } from '../utils/markdown-to-telegram-html.js';
@@ -281,12 +281,18 @@ export class TelegramBotService {
     const quote = message.quote;
 
     const derived = this.deriveContentFields(message);
+    // Build extra context for special message types (e.g., poll)
+    let extraContext: string | undefined;
+    if (message.poll) {
+      extraContext = this.buildPollContext(message.poll);
+    }
 
     await messageModel.saveMessage({
       telegramId: message.message_id,
       chatTelegramId: ctx.chat.id,
       userTelegramId: ctx.from.id,
       text: derived.text,
+      context: extraContext,
       fileName: derived.fileName,
       replyToMessageTelegramId: message.reply_to_message?.message_id,
       replyQuoteText: quote?.text,
@@ -661,6 +667,7 @@ export class TelegramBotService {
 
   private getMessageType(message: TelegramMessage): MessageType {
     if (message.text) return MESSAGE_TYPE.TEXT;
+    if (message.poll) return MESSAGE_TYPE.POLL;
     if (message.photo) return MESSAGE_TYPE.PHOTO;
     if (message.video) return MESSAGE_TYPE.VIDEO;
     if (message.video_note) return MESSAGE_TYPE.VIDEO_NOTE;
@@ -680,6 +687,9 @@ export class TelegramBotService {
     let text: string | undefined = message.text ?? undefined;
     let fileName: string | undefined = undefined;
 
+    if (message.poll) {
+      text = message.poll.question ?? text;
+    }
     if (message.photo) {
       text = message.caption ?? text;
     }
@@ -696,6 +706,30 @@ export class TelegramBotService {
     }
 
     return { text, fileName, messageType };
+  }
+
+  private buildPollContext(poll: TelegramPoll): string {
+    const lines: string[] = [];
+    const options = (poll.options || []).map((o) => o.text);
+    lines.push('Poll details:');
+    lines.push(`• Question: ${poll.question}`);
+    lines.push(`• Options: ${options.join(' | ')}`);
+    lines.push(`• Multiple answers: ${poll.allows_multiple_answers ? 'yes' : 'no'}`);
+    lines.push(`• Anonymous: ${poll.is_anonymous ? 'yes' : 'no'}`);
+    lines.push(`• Type: ${poll.type}`);
+    if (poll.correct_option_id !== undefined && poll.type === 'quiz') {
+      lines.push(`• Correct option index: ${poll.correct_option_id}`);
+    }
+    if (poll.explanation && poll.type === 'quiz') {
+      lines.push(`• Explanation: ${poll.explanation}`);
+    }
+    if (poll.open_period !== undefined) {
+      lines.push(`• Open period (sec): ${poll.open_period}`);
+    }
+    if (poll.close_date !== undefined) {
+      lines.push(`• Close date (unix): ${poll.close_date}`);
+    }
+    return lines.join('\n');
   }
 
   async start(): Promise<void> {
