@@ -2,12 +2,14 @@ import { databaseConnection } from './connection.js';
 import { TelegramUser, TelegramUserModel } from './models/TelegramUser.js';
 import { Message, MessageModel } from './models/Message.js';
 import { Summary, SummaryModel } from './models/Summary.js';
+import { Memory, MemoryModel } from './models/Memory.js';
 import logger from '../common/logger.js';
 
 export class Database {
   private telegramUserModel: TelegramUserModel | null = null;
   private messageModel: MessageModel | null = null;
   private summaryModel: SummaryModel | null = null;
+  private memoryModel: MemoryModel | null = null;
 
   async initialize(): Promise<void> {
     const db = await databaseConnection.connect();
@@ -16,10 +18,12 @@ export class Database {
       db.collection<TelegramUser>('telegramusers');
     const messagesCollection = db.collection<Message>('messages');
     const summariesCollection = db.collection<Summary>('summaries');
+    const memoriesCollection = db.collection<Memory>('memories');
 
     this.telegramUserModel = new TelegramUserModel(telegramUsersCollection);
     this.messageModel = new MessageModel(messagesCollection);
     this.summaryModel = new SummaryModel(summariesCollection);
+    this.memoryModel = new MemoryModel(memoriesCollection);
 
     await this.createIndexes();
 
@@ -33,6 +37,7 @@ export class Database {
       await this.telegramUserModel!.createIndexes();
       await this.messageModel!.createIndexes();
       await this.summaryModel!.createIndexes();
+      await this.memoryModel!.createIndexes();
 
       logger.info('Database indexes created successfully');
     } catch (error) {
@@ -59,6 +64,13 @@ export class Database {
       throw new Error('Database not initialized. Call initialize() first.');
     }
     return this.summaryModel;
+  }
+
+  getMemoryModel(): MemoryModel {
+    if (!this.memoryModel) {
+      throw new Error('Database not initialized. Call initialize() first.');
+    }
+    return this.memoryModel;
   }
 
   async disconnect(): Promise<void> {

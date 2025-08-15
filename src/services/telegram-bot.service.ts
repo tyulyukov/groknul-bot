@@ -539,6 +539,8 @@ export class TelegramBotService {
       logger.error(error, 'Failed to analyze image and store context');
     }
 
+    // No explicit memory parsing here; the AI function calling decides when to save
+
     if (this.shouldRespond(message, ctx.from.id)) {
       await ctx.react('✍');
       await this.generateAndSendResponse(ctx, message);
@@ -755,8 +757,16 @@ export class TelegramBotService {
 
   private async buildHistoricalContextSections(chatId: number): Promise<string[]> {
     const summaryModel = database.getSummaryModel();
+    const memoryModel = database.getMemoryModel();
     const messageModel = database.getMessageModel();
     const sections: string[] = [];
+
+    // Include pinned chat memory (user-stated facts to honor in replies)
+    const memories = await memoryModel.listByChat(chatId, 100);
+    if (memories.length > 0) {
+      const lines = memories.map((m) => `• ${m.text}`);
+      sections.push(`Pinned chat memory (facts to honor in replies):\n${lines.join('\n')}`);
+    }
 
     // Highest-level summaries first (very old), then lower levels, then level-0 ranges, then recent exact messages (added elsewhere)
     // Find highest existing level
@@ -792,6 +802,8 @@ export class TelegramBotService {
 
     return sections;
   }
+
+  // Memory directive parsing removed in favor of model tool calling
 
   private getMessageType(message: TelegramMessage): MessageType {
     if (message.text) return MESSAGE_TYPE.TEXT;
