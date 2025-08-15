@@ -158,16 +158,18 @@ export class AiService {
         },
       ];
 
+      const initialPromptPreview = this.shrinkMessagesForLog(baseMessages);
       logger.info(
         {
           chatId: triggerMessage.chatTelegramId,
           messageId: triggerMessage.telegramId,
           messagesCount: conversationMessages.length,
+          prompt: initialPromptPreview,
         },
-        'Generating AI response (phase 1)',
+        'Generating AI response (initial)',
       );
 
-      const completion1 = await this.openai.chat.completions.create({
+      const initialCompletion = await this.openai.chat.completions.create({
         model: 'openai/gpt-5-chat',
         // @ts-expect-error Doesn't exist in OpenAI SDK but handled on the OpenRouter side as fallback models
         models: ['openai/gpt-4.1'],
@@ -181,10 +183,10 @@ export class AiService {
         frequency_penalty: 0.8,
       });
 
-      const assistantMsg1 = completion1.choices[0]?.message;
+      const assistantProposedMessage = initialCompletion.choices[0]?.message;
 
       // If the model requested tool calls, execute them and follow up with another completion
-      const toolCalls = assistantMsg1?.tool_calls || [];
+      const toolCalls = assistantProposedMessage?.tool_calls || [];
       if (Array.isArray(toolCalls) && toolCalls.length > 0) {
         logger.info(
           {
@@ -253,13 +255,28 @@ export class AiService {
         }
 
         // Follow-up completion including only the current tool call context
-        logger.info({ toolResultMessages }, 'Following up after tool execution');
-        const completion2 = await this.openai.chat.completions.create({
+        const followupMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+          ...baseMessages,
+          assistantProposedMessage!,
+          ...toolResultMessages,
+        ];
+        const followupPromptPreview = this.shrinkMessagesForLog(followupMessages);
+        logger.info(
+          {
+            chatId: triggerMessage.chatTelegramId,
+            messageId: triggerMessage.telegramId,
+            toolCallsCount: toolCalls.length,
+            prompt: followupPromptPreview,
+          },
+          'Generating AI response (after tool call)',
+        );
+
+        const followupCompletion = await this.openai.chat.completions.create({
           model: 'openai/gpt-5-chat',
           // @ts-expect-error Doesn't exist in OpenAI SDK but handled on the OpenRouter side as fallback models
           models: ['openai/gpt-4.1'],
           plugins: [{ id: 'web' }],
-          messages: [...baseMessages, assistantMsg1!, ...toolResultMessages],
+          messages: followupMessages,
           tools,
           max_completion_tokens: 1000,
           temperature: 0.9,
@@ -268,37 +285,37 @@ export class AiService {
           frequency_penalty: 0.8,
         });
 
-        const responseText2 = completion2.choices[0]?.message?.content?.trim();
-        if (!responseText2) {
+        const replyTextAfterToolCall = followupCompletion.choices[0]?.message?.content?.trim();
+        if (!replyTextAfterToolCall) {
           throw new Error('Empty response from AI service (after tool call)');
         }
 
         logger.info(
           {
             chatId: triggerMessage.chatTelegramId,
-            responseLength: responseText2.length,
-            tokensUsed: completion2.usage?.total_tokens,
+            responseLength: replyTextAfterToolCall.length,
+            tokensUsed: followupCompletion.usage?.total_tokens,
           },
           'AI response generated successfully (after tool call)',
         );
-        return responseText2;
+        return replyTextAfterToolCall;
       }
 
       // No tool calls; use the first response content
-      const responseText1 = completion1.choices[0]?.message?.content?.trim();
-      if (!responseText1) {
+      const replyText = initialCompletion.choices[0]?.message?.content?.trim();
+      if (!replyText) {
         throw new Error('Empty response from AI service');
       }
 
       logger.info(
         {
           chatId: triggerMessage.chatTelegramId,
-          responseLength: responseText1.length,
-          tokensUsed: completion1.usage?.total_tokens,
+          responseLength: replyText.length,
+          tokensUsed: initialCompletion.usage?.total_tokens,
         },
         'AI response generated successfully',
       );
-      return responseText1;
+      return replyText;
     } catch (error) {
       logger.error(error, 'Failed to generate AI response');
 
@@ -479,5 +496,44 @@ ${getStartMessage(botUsername)}
       }));
 
     return [...historicalBlocks, ...chronological];
+  }
+
+  private shrinkMessagesForLog(
+    messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  ): unknown[] {
+    const MAX_HEAD = 25;
+    const MAX_TAIL = 25;
+
+    const serialize = (m: OpenAI.Chat.Completions.ChatCompletionMessageParam) => {
+      const role = (m as any).role;
+      const content = (m as any).content;
+      const tool_call_id = (m as any).tool_call_id;
+      const name = (m as any).name;
+
+      let previewContent: unknown;
+      if (typeof content === 'string') {
+        previewContent = content.slice(0, 500);
+      } else if (Array.isArray(content)) {
+        previewContent = content.map((c) =>
+          typeof c === 'string'
+            ? c.slice(0, 200)
+            : { ...c, text: (c as any).text?.slice?.(0, 200) },
+        );
+      } else if (content && typeof content === 'object') {
+        previewContent = JSON.stringify(content).slice(0, 500);
+      } else {
+        previewContent = content ?? null;
+      }
+
+      return { role, name, tool_call_id, content: previewContent };
+    };
+
+    if (messages.length <= MAX_HEAD + MAX_TAIL) {
+      return messages.map(serialize);
+    }
+
+    const head = messages.slice(0, MAX_HEAD).map(serialize);
+    const tail = messages.slice(-MAX_TAIL).map(serialize);
+    return [...head, {}, ...tail];
   }
 }
