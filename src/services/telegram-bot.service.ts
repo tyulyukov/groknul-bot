@@ -14,6 +14,7 @@ import { MessageReaction } from '../database/models/Message.js';
 import { API_CONSTANTS } from 'grammy';
 import { markdownToTelegramHtml } from '../utils/markdown-to-telegram-html.js';
 import { MESSAGE_TYPE, MessageType } from '../common/message-types.js';
+//
 
 interface SessionData {
   messageCount: number;
@@ -178,6 +179,77 @@ export class TelegramBotService {
     });
   }
 
+  private async ensureSummaries(chatId: number): Promise<void> {
+    const messageModel = database.getMessageModel();
+    const summaryModel = database.getSummaryModel();
+
+    // Level 0: summarize every 200 messages into one summary block
+    const totalMessages = await messageModel.countMessages(chatId);
+    const existingLevel0Count = await summaryModel.getCount(chatId, 0);
+    const requiredLevel0Blocks = Math.floor(totalMessages / 200);
+
+    for (let i = existingLevel0Count; i < requiredLevel0Blocks; i++) {
+      const batch = await messageModel.getMessagesAscending(chatId, i * 200, 200);
+      if (batch.length === 0) break;
+      const labeled = batch.map((msg, idx) => {
+        const n = 200 - idx;
+        const label = `${n}..${n - 1 >= 1 ? n - 1 : 1}`;
+        const user = msg.user?.username || `${msg.user?.firstName || 'Unknown'}`;
+        const text = msg.text || '[non-text content]';
+        const ts = new Date(msg.sentAt).toISOString();
+        return `${label} | ${ts} | ${user}: ${text}`;
+      });
+      const instruction = 'Summarize the following 200 chronological chat messages into a compact, information-dense paragraph or two. Include main topics, key decisions, answers, and unresolved questions. Keep most relevant names. Avoid quoting unless essential.';
+      const summary = await this.aiService.summarizeText(labeled, instruction);
+
+      await summaryModel.upsertSummary({
+        chatTelegramId: chatId,
+        level: 0,
+        index: i,
+        summary,
+        startSentAt: batch[0]?.sentAt,
+        endSentAt: batch[batch.length - 1]?.sentAt,
+      });
+      logger.info({ chatId, level: 0, index: i }, 'Created level-0 batch summary');
+    }
+
+    // Higher levels: every 200 summaries collapse into one higher-level summary
+    let level = 1;
+    while (true) {
+      const lowerLevel = level - 1;
+      const lowerCount = await summaryModel.getCount(chatId, lowerLevel);
+      if (lowerCount < 200) break;
+
+      const existingHigherCount = await summaryModel.getCount(chatId, level);
+      const requiredHigherBlocks = Math.floor(lowerCount / 200);
+
+      for (let i = existingHigherCount; i < requiredHigherBlocks; i++) {
+        const range = await summaryModel.getRangeByLevelAscending(
+          chatId,
+          lowerLevel,
+          i * 200,
+          200,
+        );
+        if (range.length === 0) break;
+        const labeled = range.map((s, idx) => `Block ${idx + 1}: ${s.summary}`);
+        const instruction = 'Summarize these 200 summaries into a compact overview that preserves chronology and the most critical developments, decisions, conclusions, and ongoing threads. Keep it brief yet comprehensive.';
+        const summary = await this.aiService.summarizeText(labeled, instruction);
+
+        await summaryModel.upsertSummary({
+          chatTelegramId: chatId,
+          level,
+          index: i,
+          summary,
+          startSentAt: range[0]?.startSentAt,
+          endSentAt: range[range.length - 1]?.endSentAt,
+        });
+        logger.info({ chatId, level, index: i }, 'Created higher-level summary');
+      }
+
+      level += 1;
+    }
+  }
+
   private async handleMessage(ctx: MyContext): Promise<void> {
     const message = ctx.message;
 
@@ -217,6 +289,11 @@ export class TelegramBotService {
         ?.sender_user?.id,
       payload: JSON.parse(JSON.stringify(ctx)),
     });
+
+    // Trigger background summarization maintenance
+    this.ensureSummaries(ctx.chat!.id).catch((error) =>
+      logger.error({ error, chatId: ctx.chat!.id }, 'Failed to maintain summaries'),
+    );
 
     // If message contains a photo (or a document that is a photo), analyze it and store concise context
     try {
@@ -356,6 +433,11 @@ export class TelegramBotService {
     } catch (error) {
       logger.error(error, 'Failed to track message edit');
     }
+
+    // Edits may change summaries; maintain summaries in background
+    this.ensureSummaries(ctx.chat!.id).catch((error) =>
+      logger.error({ error, chatId: ctx.chat!.id }, 'Failed to maintain summaries after edit'),
+    );
   }
 
   private async handleMessageReaction(ctx: MyContext): Promise<void> {
@@ -428,6 +510,11 @@ export class TelegramBotService {
     } catch (error) {
       logger.error(error, 'Failed to track message reaction');
     }
+
+    // Reactions may affect summarization relevance; maintain summaries in background
+    this.ensureSummaries(ctx.chat!.id).catch((error) =>
+      logger.error({ error, chatId: ctx.chat!.id }, 'Failed to maintain summaries after reaction'),
+    );
   }
 
   private shouldRespond(message: TelegramMessage, fromUserId: number): boolean {
@@ -467,10 +554,16 @@ export class TelegramBotService {
         return;
       }
 
+      // Build hierarchical historical context sections
+      const historicalSections: string[] = await this.buildHistoricalContextSections(
+        chatId,
+      );
+
       const aiResponse = await this.aiService.generateResponse(
         recentMessages,
         dbTriggerMessage,
         this.botUsername,
+        historicalSections,
       );
 
       const html = markdownToTelegramHtml(aiResponse);
@@ -488,6 +581,11 @@ export class TelegramBotService {
         messageType: 'text',
         payload: JSON.parse(JSON.stringify(sentMessage)),
       });
+
+      // After persisting the bot message, ensure background summaries are up to date (non-blocking)
+      this.ensureSummaries(chatId).catch((error) =>
+        logger.error({ error, chatId }, 'Failed to maintain summaries after bot message'),
+      );
 
       logger.info(
         {
@@ -521,6 +619,46 @@ export class TelegramBotService {
         logger.error(sendError, 'Failed to send or save error message');
       }
     }
+  }
+
+  private async buildHistoricalContextSections(chatId: number): Promise<string[]> {
+    const summaryModel = database.getSummaryModel();
+    const messageModel = database.getMessageModel();
+    const sections: string[] = [];
+
+    // Highest-level summaries first (very old), then lower levels, then level-0 ranges, then recent exact messages (added elsewhere)
+    // Find highest existing level
+    let probeLevel = 0;
+    while ((await summaryModel.getCount(chatId, probeLevel)) > 0) {
+      probeLevel += 1;
+    }
+    const maxLevel = probeLevel - 1;
+
+    for (let l = maxLevel; l >= 1; l--) {
+      const summaries = await summaryModel.getByLevelAscending(chatId, l);
+      for (const s of summaries) {
+        const title = l === maxLevel ? 'Very long time ago messages: SUMMARY of previous SUMMARIES' : 'Older messages: SUMMARY of previous SUMMARIES';
+        sections.push(`${title}\n${s.summary}`);
+      }
+    }
+
+    // Level 0: include a few recent blocks that are strictly before the last 200 exact messages
+    const totalMessages = await messageModel.countMessages(chatId);
+    const level0Summaries = await summaryModel.getByLevelAscending(chatId, 0);
+    const completedBlocks = level0Summaries.length; // completed summaries from oldest to newest
+    const blocksBeforeExact = Math.max(0, Math.floor((Math.max(0, totalMessages - 200)) / 200));
+    const includeCount = Math.min(3, Math.min(completedBlocks, blocksBeforeExact));
+    // Include from older to more recent strictly before the last 200 exact messages
+    const lastIncludedIdx = Math.min(blocksBeforeExact - 1, completedBlocks - 1);
+    const firstIncludedIdx = Math.max(1, blocksBeforeExact - includeCount);
+    for (let b = lastIncludedIdx; b >= firstIncludedIdx; b--) {
+      const s = level0Summaries[b];
+      const upper = (b + 1) * 200;
+      const lower = b * 200;
+      sections.push(`${upper}-${lower} messages:\n${s.summary}`);
+    }
+
+    return sections;
   }
 
   private getMessageType(message: TelegramMessage): MessageType {

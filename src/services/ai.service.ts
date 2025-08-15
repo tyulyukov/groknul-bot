@@ -18,6 +18,28 @@ export class AiService {
     });
   }
 
+  async summarizeText(blocks: string[], instruction: string): Promise<string> {
+    const content = blocks.join('\n\n');
+    const completion = await this.openai.chat.completions.create({
+      model: 'openai/gpt-5-mini',
+      // @ts-expect-error OpenRouter pass-through for disabling reasoning
+      reasoning: { effort: 'low' },
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are a professional summarizer. Summarize inputs into concise, neutral, information-dense notes. Keep key facts, actors, decisions, questions, answers, tasks, and resolutions. Remove chit-chat and filler. Prefer paragraphs over bullets unless events are disjoint. Preserve chronology labels provided.',
+        },
+        { role: 'user', content: `${instruction}\n\n${content}` },
+      ],
+      temperature: 0.2,
+      max_completion_tokens: 800,
+      top_p: 0.9,
+    });
+
+    return completion.choices[0]?.message?.content?.trim() || '';
+  }
+
   async analyzeImage(imageBase64DataUrl: string): Promise<string> {
     try {
       logger.info(
@@ -67,9 +89,10 @@ export class AiService {
     messages: PopulatedMessage[],
     triggerMessage: PopulatedMessage,
     botUsername: string,
+    historicalContextSections?: string[],
   ): Promise<string> {
     try {
-      const conversationMessages = this.buildContext(messages, botUsername);
+      const conversationMessages = this.buildContext(messages, botUsername, historicalContextSections);
 
       const prompt: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: 'system', content: this.getSystemPrompt(botUsername) },
@@ -171,6 +194,7 @@ ${getStartMessage(botUsername)}
   private buildContext(
     messages: PopulatedMessage[],
     botUsername: string,
+    historicalContextSections?: string[],
   ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
     // Helper functions for formatting message metadata
     const formatTimestamp = (date: Date): string =>
@@ -294,7 +318,21 @@ ${getStartMessage(botUsername)}
       return { role, content };
     };
 
-    // Convert to OpenAI messages format
-    return messages.reverse().map(convertToOpenAIMessage);
+    const chronologicalBase = messages.reverse().map(convertToOpenAIMessage);
+
+    // Number the last messages from N..1 as requested
+    const chronological = chronologicalBase.map((m, idx) => {
+      const labelNumber = chronologicalBase.length - idx;
+      const content = typeof m.content === 'string' ? m.content : '';
+      return { ...m, content: `${labelNumber}:\n${content}` };
+    });
+
+    const historicalBlocks: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
+      (historicalContextSections || []).map((block) => ({
+        role: 'system',
+        content: block,
+      }));
+
+    return [...historicalBlocks, ...chronological];
   }
 }

@@ -58,14 +58,48 @@ export interface PopulatedMessage extends Omit<Message, 'reactions'> {
 export class MessageModel {
   constructor(private collection: Collection<Message>) {}
 
-  async findByMessageTelegramId(
-    telegramId: number,
-    chatTelegramId: number,
-  ): Promise<PopulatedMessage | null> {
-    const pipeline = [
-      {
-        $match: { telegramId, chatTelegramId },
+  // --- DRY aggregation helpers ---
+  private buildReplyLookupStage() {
+    return {
+      $lookup: {
+        from: 'messages',
+        let: {
+          replyId: '$replyToMessageTelegramId',
+          chatId: '$chatTelegramId',
+        },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ['$telegramId', '$$replyId'] },
+                  { $eq: ['$chatTelegramId', '$$chatId'] },
+                ],
+              },
+            },
+          },
+          {
+            $lookup: {
+              from: 'telegramusers',
+              localField: 'userTelegramId',
+              foreignField: 'telegramId',
+              as: 'user',
+            },
+          },
+          {
+            $addFields: {
+              user: { $arrayElemAt: ['$user', 0] },
+            },
+          },
+        ],
+        as: 'replyToMessage',
       },
+    } as const;
+  }
+
+  private buildPopulationStages() {
+    return [
+      // Author user
       {
         $lookup: {
           from: 'telegramusers',
@@ -74,41 +108,9 @@ export class MessageModel {
           as: 'user',
         },
       },
-      {
-        $lookup: {
-          from: 'messages',
-          let: {
-            replyId: '$replyToMessageTelegramId',
-            chatId: '$chatTelegramId',
-          },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ['$telegramId', '$$replyId'] },
-                    { $eq: ['$chatTelegramId', '$$chatId'] },
-                  ],
-                },
-              },
-            },
-            {
-              $lookup: {
-                from: 'telegramusers',
-                localField: 'userTelegramId',
-                foreignField: 'telegramId',
-                as: 'user',
-              },
-            },
-            {
-              $addFields: {
-                user: { $arrayElemAt: ['$user', 0] },
-              },
-            },
-          ],
-          as: 'replyToMessage',
-        },
-      },
+      // Reply (including its user)
+      this.buildReplyLookupStage(),
+      // Forwarded from user
       {
         $lookup: {
           from: 'telegramusers',
@@ -117,6 +119,7 @@ export class MessageModel {
           as: 'forwardFromUser',
         },
       },
+      // Reaction users
       {
         $lookup: {
           from: 'telegramusers',
@@ -125,6 +128,7 @@ export class MessageModel {
           as: 'reactionUsers',
         },
       },
+      // Normalize shapes and map reactions with users
       {
         $addFields: {
           user: { $arrayElemAt: ['$user', 0] },
@@ -160,10 +164,27 @@ export class MessageModel {
           },
         },
       },
-      {
-        $unset: 'reactionUsers',
-      },
-    ];
+      { $unset: 'reactionUsers' },
+    ] as const;
+  }
+
+  private buildPipeline(
+    match: Record<string, unknown>,
+    options?: { sort?: Record<string, 1 | -1>; skip?: number; limit?: number },
+  ) {
+    const stages: any[] = [{ $match: match }];
+    if (options?.sort) stages.push({ $sort: options.sort });
+    if (typeof options?.skip === 'number') stages.push({ $skip: options.skip });
+    if (typeof options?.limit === 'number') stages.push({ $limit: options.limit });
+    stages.push(...this.buildPopulationStages());
+    return stages;
+  }
+
+  async findByMessageTelegramId(
+    telegramId: number,
+    chatTelegramId: number,
+  ): Promise<PopulatedMessage | null> {
+    const pipeline = this.buildPipeline({ telegramId, chatTelegramId });
 
     const result = await this.collection
       .aggregate<PopulatedMessage>(pipeline)
@@ -297,118 +318,33 @@ export class MessageModel {
     chatId: number,
     limit: number,
   ): Promise<PopulatedMessage[]> {
-    const pipeline = [
-      {
-        $match: { chatTelegramId: chatId },
-      },
-      {
-        $sort: { sentAt: -1 },
-      },
-      {
-        $limit: limit,
-      },
-      {
-        $lookup: {
-          from: 'telegramusers',
-          localField: 'userTelegramId',
-          foreignField: 'telegramId',
-          as: 'user',
-        },
-      },
-      {
-        $lookup: {
-          from: 'messages',
-          let: {
-            replyId: '$replyToMessageTelegramId',
-            chatId: '$chatTelegramId',
-          },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ['$telegramId', '$$replyId'] },
-                    { $eq: ['$chatTelegramId', '$$chatId'] },
-                  ],
-                },
-              },
-            },
-            {
-              $lookup: {
-                from: 'telegramusers',
-                localField: 'userTelegramId',
-                foreignField: 'telegramId',
-                as: 'user',
-              },
-            },
-            {
-              $addFields: {
-                user: { $arrayElemAt: ['$user', 0] },
-              },
-            },
-          ],
-          as: 'replyToMessage',
-        },
-      },
-      {
-        $lookup: {
-          from: 'telegramusers',
-          localField: 'forwardFromUserTelegramId',
-          foreignField: 'telegramId',
-          as: 'forwardFromUser',
-        },
-      },
-      {
-        $lookup: {
-          from: 'telegramusers',
-          localField: 'reactions.userTelegramId',
-          foreignField: 'telegramId',
-          as: 'reactionUsers',
-        },
-      },
-      {
-        $addFields: {
-          user: { $arrayElemAt: ['$user', 0] },
-          replyToMessage: { $arrayElemAt: ['$replyToMessage', 0] },
-          forwardFromUser: { $arrayElemAt: ['$forwardFromUser', 0] },
-          reactions: {
-            $map: {
-              input: '$reactions',
-              as: 'reaction',
-              in: {
-                userTelegramId: '$$reaction.userTelegramId',
-                emoji: '$$reaction.emoji',
-                customEmojiId: '$$reaction.customEmojiId',
-                addedAt: '$$reaction.addedAt',
-                user: {
-                  $arrayElemAt: [
-                    {
-                      $filter: {
-                        input: '$reactionUsers',
-                        cond: {
-                          $eq: [
-                            '$$this.telegramId',
-                            '$$reaction.userTelegramId',
-                          ],
-                        },
-                      },
-                    },
-                    0,
-                  ],
-                },
-              },
-            },
-          },
-        },
-      },
-      {
-        $unset: 'reactionUsers',
-      },
-    ];
+    const pipeline = this.buildPipeline(
+      { chatTelegramId: chatId },
+      { sort: { sentAt: -1 }, limit },
+    );
 
     return await this.collection
       .aggregate<PopulatedMessage>(pipeline)
       .toArray();
+  }
+
+  async getMessagesAscending(
+    chatId: number,
+    skip: number,
+    limit: number,
+  ): Promise<PopulatedMessage[]> {
+    const pipeline = this.buildPipeline(
+      { chatTelegramId: chatId },
+      { sort: { sentAt: 1 }, skip, limit },
+    );
+
+    return await this.collection
+      .aggregate<PopulatedMessage>(pipeline)
+      .toArray();
+  }
+
+  async countMessages(chatId: number): Promise<number> {
+    return this.collection.countDocuments({ chatTelegramId: chatId });
   }
 
   async createIndexes(): Promise<void> {
