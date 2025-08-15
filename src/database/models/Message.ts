@@ -1,4 +1,4 @@
-import { Collection, CreateIndexesOptions, IndexSpecification } from 'mongodb';
+import { Collection, CreateIndexesOptions, IndexSpecification, ObjectId } from 'mongodb';
 import { TelegramUser } from './TelegramUser.js';
 import { MessageType } from '../../common/message-types.js';
 import logger from '../../common/logger.js';
@@ -193,6 +193,21 @@ export class MessageModel {
     return result.length > 0 ? result[0] : null;
   }
 
+  async findByDbId(id: string): Promise<PopulatedMessage | null> {
+    let objectId: ObjectId;
+    try {
+      objectId = new ObjectId(id);
+    } catch {
+      return null;
+    }
+
+    const pipeline = this.buildPipeline({ _id: objectId });
+    const result = await this.collection
+      .aggregate<PopulatedMessage>(pipeline)
+      .toArray();
+    return result.length > 0 ? result[0] : null;
+  }
+
   async saveMessage(messageData: Partial<Message>): Promise<Message> {
     const now = new Date();
 
@@ -345,6 +360,20 @@ export class MessageModel {
 
   async countMessages(chatId: number): Promise<number> {
     return this.collection.countDocuments({ chatTelegramId: chatId });
+  }
+
+  async countAllMessages(): Promise<number> {
+    return this.collection.countDocuments({});
+  }
+
+  async getMessageCountsByChat(): Promise<{ chatTelegramId: number; count: number }[]> {
+    const docs = await this.collection
+      .aggregate<{ _id: number; count: number }>([
+        { $group: { _id: '$chatTelegramId', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ])
+      .toArray();
+    return docs.map((d) => ({ chatTelegramId: d._id, count: d.count }));
   }
 
   async createIndexes(): Promise<void> {

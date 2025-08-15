@@ -10,6 +10,7 @@ interface Config {
     webhookSecret?: string;
     serverHost: string;
     serverPort: number;
+    adminIds: number[];
   };
   openRouter: {
     apiKey: string;
@@ -37,6 +38,12 @@ export const config: Config = {
     webhookSecret: process.env.TELEGRAM_BOT_WEBHOOK_SECRET,
     serverHost: process.env.TELEGRAM_BOT_SERVER_HOST || '0.0.0.0',
     serverPort: parseInt(process.env.TELEGRAM_BOT_SERVER_PORT || '3000', 10),
+    adminIds: (process.env.TELEGRAM_BOT_ADMIN_IDS || '')
+      .split(',')
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0)
+      .map((v) => Number(v))
+      .filter((v) => Number.isFinite(v)),
   },
   openRouter: {
     apiKey: getRequiredEnvVar('OPENROUTER_API_KEY'),

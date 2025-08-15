@@ -127,6 +127,134 @@ export class TelegramBotService {
       await ctx.reply(getStartMessage(this.botUsername));
     });
 
+    // --- Admin-only commands (private chats only) ---
+    this.bot.command('stats', async (ctx) => {
+      if (ctx.chat?.type !== 'private') return;
+      if (!ctx.from || !config.telegram.adminIds.includes(ctx.from.id)) return;
+
+      try {
+        const messageModel = database.getMessageModel();
+        const totalMessages = await messageModel.countAllMessages();
+        const byChat = await messageModel.getMessageCountsByChat();
+
+        const uniqueChats = byChat.length;
+        const lines = byChat
+          .slice(0, 20)
+          .map((c, idx) => `${idx + 1}. ${c.chatTelegramId}: ${c.count}`)
+          .join('\n');
+
+        const text = [
+          '<b>Stats</b>',
+          `• <b>Total messages:</b> ${totalMessages}`,
+          `• <b>Chats tracked:</b> ${uniqueChats}`,
+          byChat.length > 0 ? '<b>Top chats by message count:</b>' : '',
+          byChat.length > 0 ? `<pre>${lines}</pre>` : '<i>No chats yet</i>',
+        ]
+          .filter(Boolean)
+          .join('\n');
+
+        await ctx.reply(text);
+      } catch (error) {
+        logger.error(error, 'Failed to compute /stats');
+        await ctx.reply('Failed to compute stats.');
+      }
+    });
+
+    this.bot.command('say', async (ctx) => {
+      if (ctx.chat?.type !== 'private') return;
+      if (!ctx.from || !config.telegram.adminIds.includes(ctx.from.id)) return;
+
+      const fullText = ctx.message?.text || '';
+      const rest = fullText.replace(/^\/(say)(?:@[^\s]+)?\s*/i, '');
+      const match = rest.match(/^(-?\d+)\s+([\s\S]+)$/);
+      if (!match) {
+        await ctx.reply('Usage: /say <chatTelegramId> <text>');
+        return;
+      }
+      const chatId = Number(match[1]);
+      if (!Number.isFinite(chatId)) {
+        await ctx.reply('Invalid chatTelegramId');
+        return;
+      }
+      const textToSend = match[2].trim();
+      if (textToSend.length === 0) {
+        await ctx.reply('Text cannot be empty');
+        return;
+      }
+
+      try {
+        const html = markdownToTelegramHtml(textToSend);
+        const sent = await ctx.api.sendMessage(chatId, html);
+
+        const messageModel = database.getMessageModel();
+        await messageModel.saveMessage({
+          telegramId: sent.message_id,
+          chatTelegramId: chatId,
+          userTelegramId: this.bot.botInfo.id,
+          text: textToSend,
+          sentAt: new Date(sent.date * 1000),
+          messageType: 'text',
+          payload: JSON.parse(JSON.stringify(sent)),
+        });
+
+        await ctx.reply(`Sent to chat ${chatId} (message ${sent.message_id}).`);
+      } catch (error) {
+        logger.error({ error, rest }, 'Failed to execute /say');
+        await ctx.reply('Failed to send message.');
+      }
+    });
+
+    this.bot.command('reply', async (ctx) => {
+      if (ctx.chat?.type !== 'private') return;
+      if (!ctx.from || !config.telegram.adminIds.includes(ctx.from.id)) return;
+
+      const fullText = ctx.message?.text || '';
+      const rest = fullText.replace(/^\/(reply)(?:@[^\s]+)?\s*/i, '');
+      const match = rest.match(/^([A-Fa-f0-9]{24})\s+([\s\S]+)$/);
+      if (!match) {
+        await ctx.reply('Usage: /reply <dbMessageId> <text>');
+        return;
+      }
+      const dbId = match[1];
+      const textToSend = match[2].trim();
+      if (textToSend.length === 0) {
+        await ctx.reply('Text cannot be empty');
+        return;
+      }
+
+      try {
+        const messageModel = database.getMessageModel();
+        const original = await messageModel.findByDbId(dbId);
+        if (!original) {
+          await ctx.reply('Message not found by provided DB id.');
+          return;
+        }
+
+        const html = markdownToTelegramHtml(textToSend);
+        const sent = await ctx.api.sendMessage(original.chatTelegramId, html, {
+          reply_to_message_id: original.telegramId,
+        });
+
+        await messageModel.saveMessage({
+          telegramId: sent.message_id,
+          chatTelegramId: original.chatTelegramId,
+          userTelegramId: this.bot.botInfo.id,
+          text: textToSend,
+          replyToMessageTelegramId: original.telegramId,
+          sentAt: new Date(sent.date * 1000),
+          messageType: 'text',
+          payload: JSON.parse(JSON.stringify(sent)),
+        });
+
+        await ctx.reply(
+          `Replied in chat ${original.chatTelegramId} to message ${original.telegramId}.`,
+        );
+      } catch (error) {
+        logger.error({ error, rest }, 'Failed to execute /reply');
+        await ctx.reply('Failed to reply.');
+      }
+    });
+
     this.bot.on('message', async (ctx) => {
       if (
         !ctx.chat ||
