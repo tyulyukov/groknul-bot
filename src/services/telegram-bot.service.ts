@@ -788,13 +788,18 @@ export class TelegramBotService {
     const totalMessages = await messageModel.countMessages(chatId);
     const level0Summaries = await summaryModel.getByLevelAscending(chatId, 0);
     const completedBlocks = level0Summaries.length; // completed summaries from oldest to newest
-    const blocksBeforeExact = Math.max(0, Math.floor((Math.max(0, totalMessages - 200)) / 200));
-    const includeCount = Math.min(3, Math.min(completedBlocks, blocksBeforeExact));
-    // Include from older to more recent strictly before the last 200 exact messages
+    // Determine how many complete 200-message blocks exist strictly before the last 200 exact messages
+    const blocksBeforeExact = Math.max(0, Math.floor(Math.max(0, totalMessages - 200) / 200));
+    // Include ALL completed blocks strictly before the last 200 exact messages
     const lastIncludedIdx = Math.min(blocksBeforeExact - 1, completedBlocks - 1);
-    const firstIncludedIdx = Math.max(1, blocksBeforeExact - includeCount);
+    // Indexing is oldest..newest; block 0 corresponds to 0-200 earliest, not the last 200.
+    // We want to include all level-0 summaries up to (but not including) the block of the last 200 exact messages.
+    // If there are B blocks completed and E blocks covered by last 200 exact window is floor((total - 1)/200),
+    // blocks strictly before exact window are 0..(blocksBeforeExact-1). We'll include from b=blocksBeforeExact-1 down to 0.
+    const firstIncludedIdx = 0;
     for (let b = lastIncludedIdx; b >= firstIncludedIdx; b--) {
       const s = level0Summaries[b];
+      if (!s) continue;
       const upper = (b + 1) * 200;
       const lower = b * 200;
       sections.push(`${upper}-${lower} messages:\n${s.summary}`);
