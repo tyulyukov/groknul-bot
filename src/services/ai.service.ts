@@ -32,7 +32,7 @@ export class AiService {
           {
             role: 'system',
             content:
-              'Describe the image briefly in 1-3 concise sentences. Extract any clearly visible text verbatim if short. Focus on the main objects, actions, and any relevant context for a chat conversation. Avoid speculation.',
+              'Provide a full, detailed description of the image. Describe the overall scene, key objects, their attributes (size, color, shape, texture), spatial relationships, actions, and interactions. Include environment, layout/composition, lighting, mood, style, logos/brands, UI elements, and any relevant context for a chat conversation. Transcribe all clearly visible text verbatim; if some text is small or partially visible, note that and transcribe what is legible. Be precise and avoid speculation; when uncertain, state that you are unsure. Write in clear paragraphs and do not summarize.',
           },
           {
             role: 'user',
@@ -42,7 +42,7 @@ export class AiService {
           },
         ],
         temperature: 0.2,
-        max_completion_tokens: 500,
+        max_completion_tokens: 1500,
         top_p: 0.9,
       });
 
