@@ -700,7 +700,30 @@ export class TelegramBotService {
         historicalSections,
       );
 
-      const html = markdownToTelegramHtml(aiResponse);
+      // If tools were used, emit a technical message
+      if (aiResponse.toolsUsed && aiResponse.toolsUsed.length > 0) {
+        try {
+          const toolNameList = aiResponse.toolsUsed.map((n) => `'${n}'`).join(', ');
+          const techText = `🛠️ AI used ${toolNameList} tool`;
+          const techMsg = await ctx.reply(techText, {
+            reply_to_message_id: triggerMessage.message_id,
+          });
+          await messageModel.saveMessage({
+            telegramId: techMsg.message_id,
+            chatTelegramId: chatId,
+            userTelegramId: this.bot.botInfo.id,
+            text: techText,
+            replyToMessageTelegramId: triggerMessage.message_id,
+            sentAt: new Date(techMsg.date * 1000),
+            messageType: 'text',
+            payload: JSON.parse(JSON.stringify(techMsg)),
+          });
+        } catch (error) {
+          logger.error({ error }, 'Failed to send technical tool usage message');
+        }
+      }
+
+      const html = markdownToTelegramHtml(aiResponse.text);
       const sentMessage = await ctx.reply(html, {
         reply_to_message_id: triggerMessage.message_id,
       });
@@ -709,7 +732,7 @@ export class TelegramBotService {
         telegramId: sentMessage.message_id,
         chatTelegramId: chatId,
         userTelegramId: this.bot.botInfo.id,
-        text: aiResponse,
+        text: aiResponse.text,
         replyToMessageTelegramId: triggerMessage.message_id,
         sentAt: new Date(sentMessage.date * 1000),
         messageType: 'text',

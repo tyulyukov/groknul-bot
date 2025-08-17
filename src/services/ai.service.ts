@@ -9,6 +9,12 @@ import { TelegramUser } from '../database/models/TelegramUser.js';
 import { getStartMessage } from './telegram-bot.service.js';
 import { database } from '../database/index.js';
 
+// Public types for AI results and tool usage
+export interface AiResponseResult {
+  text: string;
+  toolsUsed: string[];
+}
+
 export class AiService {
   private openai: OpenAI;
 
@@ -111,7 +117,7 @@ export class AiService {
     triggerMessage: PopulatedMessage,
     botUsername: string,
     historicalContextSections?: string[],
-  ): Promise<string> {
+  ): Promise<AiResponseResult> {
     try {
       const conversationMessages = this.buildContext(
         messages,
@@ -132,7 +138,9 @@ export class AiService {
             `\n\n✅ CORRECT RESPONSE (without metadata):` +
             `\n\n your text` +
             `\n\nAvailable tool (for the model to call when appropriate): save_to_memory(text).` +
-            ` Call save_to_memory ONLY when the CURRENT user message explicitly asks to remember/save/memorize something.`,
+            `\n\nCRITICAL: If you state that you remembered/saved something, you MUST call save_to_memory in THIS turn. If you forgot, call it BEFORE responding.` +
+            ` Saved memories are always injected into the system context of future replies automatically; you do not need to restate them.` +
+            ` Only call save_to_memory when the CURRENT user message explicitly asks to remember/save/memorize something.`,
         },
       ];
 
@@ -187,6 +195,7 @@ export class AiService {
 
       // If the model requested tool calls, execute them and follow up with another completion
       const toolCalls = assistantProposedMessage?.tool_calls || [];
+      const toolsUsed: string[] = [];
       if (Array.isArray(toolCalls) && toolCalls.length > 0) {
         logger.info(
           {
@@ -232,6 +241,7 @@ export class AiService {
                   content,
                 };
                 toolResultMessages.push(toolMsg);
+                toolsUsed.push('save_to_memory');
               } catch (error) {
                 logger.error(error, 'Failed to save memory');
                 const content = JSON.stringify({ status: 'error', error: String(error) });
@@ -298,7 +308,7 @@ export class AiService {
           },
           'AI response generated successfully (after tool call)',
         );
-        return replyTextAfterToolCall;
+        return { text: replyTextAfterToolCall, toolsUsed };
       }
 
       // No tool calls; use the first response content
@@ -315,7 +325,7 @@ export class AiService {
         },
         'AI response generated successfully',
       );
-      return replyText;
+      return { text: replyText, toolsUsed: [] };
     } catch (error) {
       logger.error(error, 'Failed to generate AI response');
 
