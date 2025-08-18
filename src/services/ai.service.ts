@@ -181,8 +181,7 @@ export class AiService {
 
       const initialCompletion = await this.openai.chat.completions.create({
         model: 'openai/gpt-5-chat',
-        // @ts-expect-error Doesn't exist in OpenAI SDK but handled on the OpenRouter side as fallback models
-        models: ['openai/gpt-4.1'],
+        // @ts-expect-error Doesn't exist in OpenAI SDK but handled on the OpenRouter side
         plugins: [{ id: 'web' }],
         messages: baseMessages,
         tools,
@@ -291,8 +290,7 @@ export class AiService {
 
         const followupCompletion = await this.openai.chat.completions.create({
           model: 'openai/gpt-5-chat',
-          // @ts-expect-error Doesn't exist in OpenAI SDK but handled on the OpenRouter side as fallback models
-          models: ['openai/gpt-4.1'],
+          // @ts-expect-error Doesn't exist in OpenAI SDK but handled on the OpenRouter side
           plugins: [{ id: 'web' }],
           messages: followupMessages,
           tools,
