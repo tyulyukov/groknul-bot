@@ -22,6 +22,10 @@ export class AiService {
     this.openai = new OpenAI({
       baseURL: 'https://openrouter.ai/api/v1',
       apiKey: config.openRouter.apiKey,
+      defaultHeaders: {
+        'HTTP-Referer': 'https://tyulyukov.com',
+        'X-Title': 'groknul-bot',
+      },
     });
   }
 
