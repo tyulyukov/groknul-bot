@@ -9,12 +9,15 @@ import logger from '../common/logger.js';
 import { database } from '../database/index.js';
 import { AiService } from './ai.service.js';
 import { databaseConnection } from '../database/connection.js';
-import { MessageOriginUser, Message as TelegramMessage, Poll as TelegramPoll } from 'grammy/types';
+import {
+  MessageOriginUser,
+  Message as TelegramMessage,
+  Poll as TelegramPoll,
+} from 'grammy/types';
 import { MessageReaction } from '../database/models/Message.js';
 import { API_CONSTANTS } from 'grammy';
 import { markdownToTelegramHtml } from '../utils/markdown-to-telegram-html.js';
 import { MESSAGE_TYPE, MessageType } from '../common/message-types.js';
-//
 
 interface SessionData {
   messageCount: number;
@@ -319,19 +322,36 @@ export class TelegramBotService {
     const requiredLevel0Blocks = Math.floor(totalMessages / 200);
 
     for (let i = existingLevel0Count; i < requiredLevel0Blocks; i++) {
-      logger.info({ chatId, level: 0, index: i }, 'Preparing level-0 batch summarization');
-      const batch = await messageModel.getMessagesAscending(chatId, i * 200, 200);
+      logger.info(
+        { chatId, level: 0, index: i },
+        'Preparing level-0 batch summarization',
+      );
+      const batch = await messageModel.getMessagesAscending(
+        chatId,
+        i * 200,
+        200,
+      );
       if (batch.length === 0) break;
       const labeled = batch.map((msg, idx) => {
         const n = 200 - idx;
         const label = `${n}..${n - 1 >= 1 ? n - 1 : 1}`;
-        const user = msg.user?.username || `${msg.user?.firstName || 'Unknown'}`;
+        const user =
+          msg.user?.username || `${msg.user?.firstName || 'Unknown'}`;
         const text = msg.text || '[non-text content]';
         const ts = new Date(msg.sentAt).toISOString();
         return `${label} | ${ts} | ${user}: ${text}`;
       });
-      const instruction = 'Summarize the following 200 chronological chat messages into a compact, information-dense paragraph or two. Include main topics, key decisions, answers, and unresolved questions. Keep most relevant names. Avoid quoting unless essential.';
-      logger.info({ chatId, level: 0, index: i, labeledPreview: labeled[0]?.slice(0, 160) }, 'Invoking summarizeText for level-0');
+      const instruction =
+        'Summarize the following 200 chronological chat messages into a compact, information-dense paragraph or two. Include main topics, key decisions, answers, and unresolved questions. Keep most relevant names. Avoid quoting unless essential.';
+      logger.info(
+        {
+          chatId,
+          level: 0,
+          index: i,
+          labeledPreview: labeled[0]?.slice(0, 160),
+        },
+        'Invoking summarizeText for level-0',
+      );
       const summary = await this.aiService.summarizeText(labeled, instruction);
 
       await summaryModel.upsertSummary({
@@ -342,7 +362,10 @@ export class TelegramBotService {
         startSentAt: batch[0]?.sentAt,
         endSentAt: batch[batch.length - 1]?.sentAt,
       });
-      logger.info({ chatId, level: 0, index: i }, 'Created level-0 batch summary');
+      logger.info(
+        { chatId, level: 0, index: i },
+        'Created level-0 batch summary',
+      );
     }
 
     // Higher levels: every 200 summaries collapse into one higher-level summary
@@ -356,7 +379,10 @@ export class TelegramBotService {
       const requiredHigherBlocks = Math.floor(lowerCount / 200);
 
       for (let i = existingHigherCount; i < requiredHigherBlocks; i++) {
-        logger.info({ chatId, level, index: i }, 'Preparing higher-level summarization');
+        logger.info(
+          { chatId, level, index: i },
+          'Preparing higher-level summarization',
+        );
         const range = await summaryModel.getRangeByLevelAscending(
           chatId,
           lowerLevel,
@@ -365,9 +391,21 @@ export class TelegramBotService {
         );
         if (range.length === 0) break;
         const labeled = range.map((s, idx) => `Block ${idx + 1}: ${s.summary}`);
-        const instruction = 'Summarize these 200 summaries into a compact overview that preserves chronology and the most critical developments, decisions, conclusions, and ongoing threads. Keep it brief yet comprehensive.';
-        logger.info({ chatId, level, index: i, labeledFirstPreview: labeled[0]?.slice(0, 160) }, 'Invoking summarizeText for higher level');
-        const summary = await this.aiService.summarizeText(labeled, instruction);
+        const instruction =
+          'Summarize these 200 summaries into a compact overview that preserves chronology and the most critical developments, decisions, conclusions, and ongoing threads. Keep it brief yet comprehensive.';
+        logger.info(
+          {
+            chatId,
+            level,
+            index: i,
+            labeledFirstPreview: labeled[0]?.slice(0, 160),
+          },
+          'Invoking summarizeText for higher level',
+        );
+        const summary = await this.aiService.summarizeText(
+          labeled,
+          instruction,
+        );
 
         await summaryModel.upsertSummary({
           chatTelegramId: chatId,
@@ -377,7 +415,10 @@ export class TelegramBotService {
           startSentAt: range[0]?.startSentAt,
           endSentAt: range[range.length - 1]?.endSentAt,
         });
-        logger.info({ chatId, level, index: i }, 'Created higher-level summary');
+        logger.info(
+          { chatId, level, index: i },
+          'Created higher-level summary',
+        );
       }
 
       level += 1;
@@ -434,7 +475,10 @@ export class TelegramBotService {
 
     // Trigger background summarization maintenance
     this.ensureSummaries(ctx.chat!.id).catch((error) =>
-      logger.error({ error, chatId: ctx.chat!.id }, 'Failed to maintain summaries'),
+      logger.error(
+        { error, chatId: ctx.chat!.id },
+        'Failed to maintain summaries',
+      ),
     );
 
     // If message contains a photo (or a document that is a photo), analyze it and store concise context
@@ -689,9 +733,8 @@ export class TelegramBotService {
       }
 
       // Build hierarchical historical context sections
-      const historicalSections: string[] = await this.buildHistoricalContextSections(
-        chatId,
-      );
+      const historicalSections: string[] =
+        await this.buildHistoricalContextSections(chatId);
 
       const aiResponse = await this.aiService.generateResponse(
         recentMessages,
@@ -703,7 +746,9 @@ export class TelegramBotService {
       // If tools were used, emit a technical message
       if (aiResponse.toolsUsed && aiResponse.toolsUsed.length > 0) {
         try {
-          const toolNameList = aiResponse.toolsUsed.map((n) => `'${n}'`).join(', ');
+          const toolNameList = aiResponse.toolsUsed
+            .map((n) => `'${n}'`)
+            .join(', ');
           const techText = `🛠️ AI used ${toolNameList} tool`;
           const techMsg = await ctx.reply(techText, {
             reply_to_message_id: triggerMessage.message_id,
@@ -719,7 +764,10 @@ export class TelegramBotService {
             payload: JSON.parse(JSON.stringify(techMsg)),
           });
         } catch (error) {
-          logger.error({ error }, 'Failed to send technical tool usage message');
+          logger.error(
+            { error },
+            'Failed to send technical tool usage message',
+          );
         }
       }
 
@@ -741,7 +789,10 @@ export class TelegramBotService {
 
       // After persisting the bot message, ensure background summaries are up to date (non-blocking)
       this.ensureSummaries(chatId).catch((error) =>
-        logger.error({ error, chatId }, 'Failed to maintain summaries after bot message'),
+        logger.error(
+          { error, chatId },
+          'Failed to maintain summaries after bot message',
+        ),
       );
 
       logger.info(
@@ -778,7 +829,9 @@ export class TelegramBotService {
     }
   }
 
-  private async buildHistoricalContextSections(chatId: number): Promise<string[]> {
+  private async buildHistoricalContextSections(
+    chatId: number,
+  ): Promise<string[]> {
     const summaryModel = database.getSummaryModel();
     const memoryModel = database.getMemoryModel();
     const messageModel = database.getMessageModel();
@@ -788,7 +841,9 @@ export class TelegramBotService {
     const memories = await memoryModel.listByChat(chatId, 100);
     if (memories.length > 0) {
       const lines = memories.map((m) => `• ${m.text}`);
-      sections.push(`Pinned chat memory (facts to honor in replies):\n${lines.join('\n')}`);
+      sections.push(
+        `Pinned chat memory (facts to honor in replies):\n${lines.join('\n')}`,
+      );
     }
 
     // Highest-level summaries first (very old), then lower levels, then level-0 ranges, then recent exact messages (added elsewhere)
@@ -802,7 +857,10 @@ export class TelegramBotService {
     for (let l = maxLevel; l >= 1; l--) {
       const summaries = await summaryModel.getByLevelAscending(chatId, l);
       for (const s of summaries) {
-        const title = l === maxLevel ? 'Very long time ago messages: SUMMARY of previous SUMMARIES' : 'Older messages: SUMMARY of previous SUMMARIES';
+        const title =
+          l === maxLevel
+            ? 'Very long time ago messages: SUMMARY of previous SUMMARIES'
+            : 'Older messages: SUMMARY of previous SUMMARIES';
         sections.push(`${title}\n${s.summary}`);
       }
     }
@@ -812,15 +870,20 @@ export class TelegramBotService {
     const level0Summaries = await summaryModel.getByLevelAscending(chatId, 0);
     const completedBlocks = level0Summaries.length; // completed summaries from oldest to newest
     // Determine how many complete 200-message blocks exist strictly before the last 200 exact messages
-    const blocksBeforeExact = Math.max(0, Math.floor(Math.max(0, totalMessages - 200) / 200));
+    const blocksBeforeExact = Math.max(
+      0,
+      Math.floor(Math.max(0, totalMessages - 200) / 200),
+    );
     // Include ALL completed blocks strictly before the last 200 exact messages
-    const lastIncludedIdx = Math.min(blocksBeforeExact - 1, completedBlocks - 1);
-    // Indexing is oldest..newest; block 0 corresponds to 0-200 earliest, not the last 200.
-    // We want to include all level-0 summaries up to (but not including) the block of the last 200 exact messages.
-    // If there are B blocks completed and E blocks covered by last 200 exact window is floor((total - 1)/200),
-    // blocks strictly before exact window are 0..(blocksBeforeExact-1). We'll include from b=blocksBeforeExact-1 down to 0.
+    const lastIncludedIdx = Math.min(
+      blocksBeforeExact - 1,
+      completedBlocks - 1,
+    );
+    // Indexing is oldest..newest; block 0 corresponds to 0-200 earliest.
+    // Include all level-0 summaries strictly before the last 200 exact messages,
+    // from oldest to newest so the AI reads chronology in order.
     const firstIncludedIdx = 0;
-    for (let b = lastIncludedIdx; b >= firstIncludedIdx; b--) {
+    for (let b = firstIncludedIdx; b <= lastIncludedIdx; b++) {
       const s = level0Summaries[b];
       if (!s) continue;
       const upper = (b + 1) * 200;
@@ -830,8 +893,6 @@ export class TelegramBotService {
 
     return sections;
   }
-
-  // Memory directive parsing removed in favor of model tool calling
 
   private getMessageType(message: TelegramMessage): MessageType {
     if (message.text) return MESSAGE_TYPE.TEXT;
@@ -882,7 +943,9 @@ export class TelegramBotService {
     lines.push('Poll details:');
     lines.push(`• Question: ${poll.question}`);
     lines.push(`• Options: ${options.join(' | ')}`);
-    lines.push(`• Multiple answers: ${poll.allows_multiple_answers ? 'yes' : 'no'}`);
+    lines.push(
+      `• Multiple answers: ${poll.allows_multiple_answers ? 'yes' : 'no'}`,
+    );
     lines.push(`• Anonymous: ${poll.is_anonymous ? 'yes' : 'no'}`);
     lines.push(`• Type: ${poll.type}`);
     if (poll.correct_option_id !== undefined && poll.type === 'quiz') {
