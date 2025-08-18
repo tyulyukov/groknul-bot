@@ -881,13 +881,15 @@ export class TelegramBotService {
     );
     // Indexing is oldest..newest; block 0 corresponds to 0-200 earliest.
     // Include all level-0 summaries strictly before the last 200 exact messages,
-    // from oldest to newest so the AI reads chronology in order.
+    // from oldest to newest so the AI reads chronology in order. Labels should
+    // count down towards the present, e.g. 5400-5200 ... 400-200.
     const firstIncludedIdx = 0;
     for (let b = firstIncludedIdx; b <= lastIncludedIdx; b++) {
       const s = level0Summaries[b];
       if (!s) continue;
-      const upper = (b + 1) * 200;
-      const lower = b * 200;
+      const distanceFromEnd = lastIncludedIdx - b; // 0 = nearest to present
+      const lower = (distanceFromEnd + 1) * 200; // 200, 400, 600, ...
+      const upper = lower + 200; // 400, 600, 800, ...
       sections.push(`${upper}-${lower} messages:\n${s.summary}`);
     }
 

@@ -522,8 +522,8 @@ ${getStartMessage(botUsername)}
   private shrinkMessagesForLog(
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
   ): unknown[] {
-    const MAX_HEAD = 25;
-    const MAX_TAIL = 25;
+    const MAX_HEAD = 35;
+    const MAX_TAIL = 35;
 
     const serialize = (
       m: OpenAI.Chat.Completions.ChatCompletionMessageParam,
