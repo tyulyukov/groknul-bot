@@ -57,6 +57,7 @@ export class AiService {
     const summary = completion.choices[0]?.message?.content?.trim() || '';
     logger.info(
       {
+        completion,
         durationMs,
         tokensUsed: completion.usage?.total_tokens,
         summaryLength: summary.length,
@@ -125,24 +126,25 @@ export class AiService {
         historicalContextSections,
       );
 
-      const baseMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-        { role: 'system', content: this.getSystemPrompt(botUsername) },
-        ...conversationMessages,
-        {
-          role: 'system',
-          content:
-            `REMEMBER - NO METADATA IN YOUR RESPONSE.` +
-            `\n\n❌ INCORRECT RESPONSE (with metadata):` +
-            `\n\n[2025-08-03 21:52] | Replying to Someone (@someone): "user's message text"` +
-            `\n your text` +
-            `\n\n✅ CORRECT RESPONSE (without metadata):` +
-            `\n\n your text` +
-            `\n\nAvailable tool (for the model to call when appropriate): save_to_memory(text).` +
-            `\n\nCRITICAL: If you state that you remembered/saved something, you MUST call save_to_memory in THIS turn. If you forgot, call it BEFORE responding.` +
-            ` Saved memories are always injected into the system context of future replies automatically; you do not need to restate them.` +
-            ` Only call save_to_memory when the CURRENT user message explicitly asks to remember/save/memorize something.`,
-        },
-      ];
+      const baseMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
+        [
+          { role: 'system', content: this.getSystemPrompt(botUsername) },
+          ...conversationMessages,
+          {
+            role: 'system',
+            content:
+              `REMEMBER - NO METADATA IN YOUR RESPONSE.` +
+              `\n\n❌ INCORRECT RESPONSE (with metadata):` +
+              `\n\n[2025-08-03 21:52] | Replying to Someone (@someone): "user's message text"` +
+              `\n your text` +
+              `\n\n✅ CORRECT RESPONSE (without metadata):` +
+              `\n\n your text` +
+              `\n\nAvailable tool (for the model to call when appropriate): save_to_memory(text).` +
+              `\n\nCRITICAL: If you state that you remembered/saved something, you MUST call save_to_memory in THIS turn. If you forgot, call it BEFORE responding.` +
+              ` Saved memories are always injected into the system context of future replies automatically; you do not need to restate them.` +
+              ` Only call save_to_memory when the CURRENT user message explicitly asks to remember/save/memorize something.`,
+          },
+        ];
 
       const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
         {
@@ -199,6 +201,7 @@ export class AiService {
       if (Array.isArray(toolCalls) && toolCalls.length > 0) {
         logger.info(
           {
+            initialCompletion,
             toolCalls,
           },
           'Tool calls requested by the model',
@@ -209,8 +212,9 @@ export class AiService {
           { role: 'tool' }
         >;
 
-        const toolResultMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
-        for (const call of (toolCalls as ReadonlyArray<OpenAI.Chat.Completions.ChatCompletionMessageToolCall>)) {
+        const toolResultMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
+          [];
+        for (const call of toolCalls as ReadonlyArray<OpenAI.Chat.Completions.ChatCompletionMessageToolCall>) {
           const toolName = call?.function?.name;
           const toolArgsStr = call?.function?.arguments || '{}';
           let args: Record<string, unknown> = {};
@@ -244,7 +248,10 @@ export class AiService {
                 toolsUsed.push('save_to_memory');
               } catch (error) {
                 logger.error(error, 'Failed to save memory');
-                const content = JSON.stringify({ status: 'error', error: String(error) });
+                const content = JSON.stringify({
+                  status: 'error',
+                  error: String(error),
+                });
                 const toolMsg: ToolResultParam = {
                   role: 'tool',
                   tool_call_id: call.id,
@@ -253,7 +260,10 @@ export class AiService {
                 toolResultMessages.push(toolMsg);
               }
             } else {
-              const content = JSON.stringify({ status: 'error', error: 'Empty text' });
+              const content = JSON.stringify({
+                status: 'error',
+                error: 'Empty text',
+              });
               const toolMsg: ToolResultParam = {
                 role: 'tool',
                 tool_call_id: call.id,
@@ -265,12 +275,10 @@ export class AiService {
         }
 
         // Follow-up completion including only the current tool call context
-        const followupMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-          ...baseMessages,
-          assistantProposedMessage!,
-          ...toolResultMessages,
-        ];
-        const followupPromptPreview = this.shrinkMessagesForLog(followupMessages);
+        const followupMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
+          [...baseMessages, assistantProposedMessage!, ...toolResultMessages];
+        const followupPromptPreview =
+          this.shrinkMessagesForLog(followupMessages);
         logger.info(
           {
             chatId: triggerMessage.chatTelegramId,
@@ -295,13 +303,15 @@ export class AiService {
           frequency_penalty: 0.8,
         });
 
-        const replyTextAfterToolCall = followupCompletion.choices[0]?.message?.content?.trim();
+        const replyTextAfterToolCall =
+          followupCompletion.choices[0]?.message?.content?.trim();
         if (!replyTextAfterToolCall) {
           throw new Error('Empty response from AI service (after tool call)');
         }
 
         logger.info(
           {
+            followupCompletion,
             chatId: triggerMessage.chatTelegramId,
             responseLength: replyTextAfterToolCall.length,
             tokensUsed: followupCompletion.usage?.total_tokens,
@@ -319,6 +329,7 @@ export class AiService {
 
       logger.info(
         {
+          initialCompletion,
           chatId: triggerMessage.chatTelegramId,
           responseLength: replyText.length,
           tokensUsed: initialCompletion.usage?.total_tokens,
@@ -514,7 +525,9 @@ ${getStartMessage(botUsername)}
     const MAX_HEAD = 25;
     const MAX_TAIL = 25;
 
-    const serialize = (m: OpenAI.Chat.Completions.ChatCompletionMessageParam) => {
+    const serialize = (
+      m: OpenAI.Chat.Completions.ChatCompletionMessageParam,
+    ) => {
       const role = (m as any).role;
       const content = (m as any).content;
       const tool_call_id = (m as any).tool_call_id;
