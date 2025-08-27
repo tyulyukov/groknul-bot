@@ -184,8 +184,9 @@ export class AiService {
       );
 
       const initialCompletion = await this.openai.chat.completions.create({
-        model: 'openai/gpt-5-mini',
+        model: 'deepseek/deepseek-r1-distill-llama-70b',
         // @ts-expect-error Doesn't exist in OpenAI SDK but handled on the OpenRouter side
+        order: ['groq'],
         plugins: [{ id: 'web' }],
         messages: baseMessages,
         tools,
@@ -293,8 +294,9 @@ export class AiService {
         );
 
         const followupCompletion = await this.openai.chat.completions.create({
-          model: 'openai/gpt-5-mini',
+          model: 'deepseek/deepseek-r1-distill-llama-70b',
           // @ts-expect-error Doesn't exist in OpenAI SDK but handled on the OpenRouter side
+          order: ['groq'],
           plugins: [{ id: 'web' }],
           messages: followupMessages,
           tools,
