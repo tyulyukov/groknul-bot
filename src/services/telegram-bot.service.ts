@@ -583,10 +583,8 @@ export class TelegramBotService {
       logger.error(error, 'Failed to analyze image and store context');
     }
 
-    // No explicit memory parsing here; the AI function calling decides when to save
-
     if (this.shouldRespond(message, ctx.from.id)) {
-      await ctx.react('✍');
+      await ctx.replyWithChatAction('typing');
       await this.generateAndSendResponse(ctx, message);
     }
   }
