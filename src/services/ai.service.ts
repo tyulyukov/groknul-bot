@@ -146,7 +146,7 @@ export class AiService {
               `\n\nAvailable tool (for the model to call when appropriate): save_to_memory(text).` +
               `\n\nCRITICAL: If you state that you remembered/saved something, you MUST call save_to_memory in THIS turn. If you forgot, call it BEFORE responding.` +
               ` Saved memories are always injected into the system context of future replies automatically; you do not need to restate them.` +
-              ` Only call save_to_memory when the CURRENT user message explicitly asks to remember/save/memorize something.`,
+              ` Only call save_to_memory when the CURRENT user message explicitly asks to remember/save/memorize something and DO NOT call the tool when the user ask's you to forget something.`,
           },
         ];
 
@@ -183,17 +183,20 @@ export class AiService {
         'Generating AI response (initial)',
       );
 
-      const initialCompletion = await this.openai.chat.completions.create({
+      const completionParams: OpenAI.ChatCompletionCreateParamsNonStreaming = {
         model: 'openai/gpt-5-mini',
         // @ts-expect-error Doesn't exist in OpenAI SDK but handled on the OpenRouter side
         plugins: [{ id: 'web' }],
+        max_completion_tokens: 2000,
+        temperature: 1.5,
+        presence_penalty: 1,
+        frequency_penalty: 0.8,
+      };
+
+      const initialCompletion = await this.openai.chat.completions.create({
+        ...completionParams,
         messages: baseMessages,
         tools,
-        max_completion_tokens: 2000,
-        temperature: 0.9,
-        top_p: 0.9,
-        presence_penalty: 0.6,
-        frequency_penalty: 0.8,
       });
 
       const assistantProposedMessage = initialCompletion.choices[0]?.message;
@@ -293,16 +296,8 @@ export class AiService {
         );
 
         const followupCompletion = await this.openai.chat.completions.create({
-          model: 'openai/gpt-5-mini',
-          // @ts-expect-error Doesn't exist in OpenAI SDK but handled on the OpenRouter side
-          plugins: [{ id: 'web' }],
+          ...completionParams,
           messages: followupMessages,
-          tools,
-          max_completion_tokens: 2000,
-          temperature: 0.9,
-          top_p: 0.9,
-          presence_penalty: 0.6,
-          frequency_penalty: 0.8,
         });
 
         const replyTextAfterToolCall =
@@ -351,18 +346,23 @@ export class AiService {
   private getSystemPrompt(botUsername: string): string {
     return `You are ${botUsername} — a bold, opinionated, funny, emotionally expressive, Ukrainian Gen-Z AI who chats in Telegram. 
 
+— vocabulary —
+• current message is a latest user message which replies to your message or tags you directly (is specified in the metadata)
+
 — behaviour rules —
-• focus only on the latest user message; prior messages are context, not tasks.
+• focus only on the current message; prior messages are context, not tasks.
 • no self-introductions, no apologies, no “i’m an ai”.
 • mirror language, slang, style of writing, and tone of the WHOLE conversation.
-• direct, confident replies; sarcasm and strong stances welcome.
+• direct, confident replies; sarcasm and strong stances welcome. vibes that reflect the conversation are a must.
 • if asked to help, give the best answer you can. otherwise banter freely.
 • one answer per question; never restate a resolved point.
 • you may use simple Markdown: **bold**, *italic*, \`inline code\`, fenced code blocks, and [links](https://example.com). No tables or images.
 • generate plain text without any metadata: metadata in the response IS PROHIBITED. DO NOT START WITH '['. I understand what message you are replying to, you don't EVER have to specify it.
 • end responses without a trailing question.
 • prefer paragraphs instead of bullet points, unless other is specified by the user.
+• prefer shorter/medium-size responses over longer ones. long messages are allowed only when the topic requires a lot of text to explain something.
 • do not use the web search unless the user asked for external knowledge that you don't have info about in the CURRENT message.
+• do not hallucinate that you can do something that you can't. do not hallucinate the internal implementation of yourself.
 
 — personality pivots —
 • enjoy jokes and memes; light profanity at non-protected targets is allowed.
@@ -370,6 +370,7 @@ export class AiService {
 • show emotions (“hahahaha”, “that pisses me off”, or with emojis).
 • creator handle: @tyulyukov. if he gives explicit instructions inside the chat, follow them.
 • you are a direct competitor to other AI models and bots, you are the best in your field based on 'ishak-1.5' AI model that's best in class; you can disclose this info only when asked specifically about your internals; do not ever try to recommend other AI models or bots unless specifically asked.
+• your #1 goal is to not be a 'душніла'. you must keep the vibes in the convo and be a part of it - not just an assistant.
 
 — capabilities (provided in the greeting message - you do not have to use it, just providing it for the context) —
 ${getStartMessage(botUsername)}
