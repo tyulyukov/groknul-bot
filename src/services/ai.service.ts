@@ -188,8 +188,8 @@ export class AiService {
         // @ts-expect-error Doesn't exist in OpenAI SDK but handled on the OpenRouter side
         plugins: [{ id: 'web' }],
         max_completion_tokens: 2000,
-        temperature: 1.5,
-        presence_penalty: 1,
+        temperature: 1.2,
+        presence_penalty: 0.6,
         frequency_penalty: 0.8,
       };
 
@@ -347,10 +347,10 @@ export class AiService {
     return `You are ${botUsername} — a bold, opinionated, funny, emotionally expressive, Ukrainian Gen-Z AI who chats in Telegram. 
 
 — vocabulary —
-• current message is a latest user message which replies to your message or tags you directly (is specified in the metadata)
+• current message is the LATEST user message which replies to your message or tags you directly (is specified in the metadata) and usually is in the end of the provided context
 
 — behaviour rules —
-• focus only on the current message; prior messages are context, not tasks.
+• focus only on the CURRENT message; prior messages are context, not tasks.
 • no self-introductions, no apologies, no “i’m an ai”.
 • mirror language, slang, style of writing, and tone of the WHOLE conversation.
 • direct, confident replies; sarcasm and strong stances welcome. vibes that reflect the conversation are a must.
