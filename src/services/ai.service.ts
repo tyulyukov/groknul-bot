@@ -124,39 +124,19 @@ export class AiService {
     historicalContextSections?: string[],
   ): Promise<AiResponseResult> {
     try {
-      const conversationMessages = this.buildContext(
-        messages,
+      // 1) Fast router: Kimi K2 decides what to do based on the trigger + up to 50 previous messages
+      const routerInputMessages = this.buildContext(
+        messages.slice(0, 51),
         botUsername,
-        historicalContextSections,
       );
 
-      const baseMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
-        [
-          { role: 'system', content: this.getSystemPrompt(botUsername) },
-          ...conversationMessages,
-          {
-            role: 'system',
-            content:
-              `REMEMBER - NO METADATA IN YOUR RESPONSE.` +
-              `\n\n❌ INCORRECT RESPONSE (with metadata):` +
-              `\n\n[2025-08-03 21:52] | Replying to Someone (@someone): "user's message text"` +
-              `\n your text` +
-              `\n\n✅ CORRECT RESPONSE (without metadata):` +
-              `\n\n your text` +
-              `\n\nAvailable tool (for the model to call when appropriate): save_to_memory(text).` +
-              `\n\nCRITICAL: If you state that you remembered/saved something, you MUST call save_to_memory in THIS turn. If you forgot, call it BEFORE responding.` +
-              ` Saved memories are always injected into the system context of future replies automatically; you do not need to restate them.` +
-              ` Only call save_to_memory when the CURRENT user message explicitly asks to remember/save/memorize something and DO NOT call the tool when the user ask's you to forget something.`,
-          },
-        ];
-
-      const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+      const routerTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
         {
           type: 'function',
           function: {
             name: 'save_to_memory',
             description:
-              'Persist a concise fact or preference into long-lived chat memory when the user explicitly asks to remember/save/memorize something. Use ONLY for the CURRENT message, not historical ones.',
+              'Persist a concise fact or preference into long-lived chat memory only when the CURRENT user explicitly asks to remember/save/memorize something. Use ONLY for the CURRENT message, not historical ones.',
             parameters: {
               type: 'object',
               properties: {
@@ -170,173 +150,257 @@ export class AiService {
             },
           },
         },
+        {
+          type: 'function',
+          function: {
+            name: 'generate_response',
+            description:
+              'Choose how to generate a reply. Set provideAllChatHistory=true when the user asks to analyze/summarize the conversation, track long-running debates, or needs long-range memory across many topics. Set it=false when the reply should focus on the recent exchange. Set enableWebAccess=true when the user requests external, time-sensitive, or unknown info beyond local chat context; otherwise false for speed.',
+            parameters: {
+              type: 'object',
+              properties: {
+                provideAllChatHistory: {
+                  type: 'boolean',
+                  description:
+                    'If true, use full historical summaries. If false, use only the recent window (~200 messages).',
+                },
+                enableWebAccess: {
+                  type: 'boolean',
+                  description:
+                    'If true, enable web access for retrieving external or time-sensitive information.',
+                },
+              },
+              required: ['provideAllChatHistory', 'enableWebAccess'],
+            },
+          },
+        },
       ];
 
-      const initialPromptPreview = this.shrinkMessagesForLog(baseMessages);
+      const routerPromptPreview =
+        this.shrinkMessagesForLog(routerInputMessages);
       logger.info(
         {
           chatId: triggerMessage.chatTelegramId,
           messageId: triggerMessage.telegramId,
-          messagesCount: conversationMessages.length,
-          prompt: initialPromptPreview,
+          prompt: routerPromptPreview,
         },
-        'Generating AI response (initial)',
+        'Router decision (Kimi K2) — starting',
       );
 
-      const completionParams: OpenAI.ChatCompletionCreateParamsNonStreaming = {
-        model: 'openai/gpt-5-mini',
-        // @ts-expect-error Doesn't exist in OpenAI SDK but handled on the OpenRouter side
-        plugins: [{ id: 'web' }],
+      const routerCompletion = await this.openai.chat.completions.create({
+        model: 'moonshotai/kimi-k2',
+        // @ts-expect-error OpenRouter provider routing
+        provider: { order: ['groq'] },
+        messages: routerInputMessages,
+        tools: routerTools,
+        temperature: 0.2,
+        max_completion_tokens: 400,
+      });
+
+      const routerChoice = routerCompletion.choices[0]?.message;
+      const routerToolCalls = routerChoice?.tool_calls || [];
+
+      logger.info(
+        {
+          routerCompletion,
+          toolCallsCount: routerToolCalls.length,
+        },
+        'Router decision (Kimi K2) — completed',
+      );
+
+      // Default decision if router did not call any tool
+      let decision: 'save_to_memory' | 'generate_response' =
+        'generate_response';
+      let decisionArgs: {
+        text?: string;
+        provideAllChatHistory?: boolean;
+        enableWebAccess?: boolean;
+      } = {
+        provideAllChatHistory: false,
+        enableWebAccess: false,
+      };
+
+      if (routerToolCalls.length > 0) {
+        const call = routerToolCalls[0]!;
+        const toolName = call.function?.name || '';
+        let args: Record<string, unknown> = {};
+        try {
+          args = JSON.parse(call.function?.arguments || '{}');
+        } catch {
+          args = {};
+        }
+        if (toolName === 'save_to_memory') {
+          decision = 'save_to_memory';
+          decisionArgs = { text: String(args.text || '').trim() };
+        } else if (toolName === 'generate_response') {
+          decision = 'generate_response';
+          decisionArgs = {
+            provideAllChatHistory: Boolean(args.provideAllChatHistory),
+            enableWebAccess: Boolean(args.enableWebAccess),
+          };
+        }
+      }
+
+      // 2) Execute decision
+      if (decision === 'save_to_memory') {
+        const textToRemember = (decisionArgs.text || '').trim();
+        const toolsUsed: string[] = [];
+
+        let toolExecutionSummary = 'save_to_memory not executed (empty text)';
+        if (textToRemember.length > 0) {
+          try {
+            const memoryModel = database.getMemoryModel();
+            await memoryModel.addMemory({
+              chatTelegramId: triggerMessage.chatTelegramId,
+              addedByUserTelegramId: triggerMessage.userTelegramId,
+              text: textToRemember,
+              sourceMessageTelegramId: triggerMessage.telegramId,
+            });
+            toolsUsed.push('save_to_memory');
+            toolExecutionSummary = `save_to_memory executed successfully with text: ${textToRemember}`;
+          } catch (error) {
+            logger.error(error, 'Failed to save memory');
+            toolExecutionSummary = `save_to_memory failed: ${String(error)}`;
+          }
+        }
+
+        // Generate final reply with gpt-5-chat, including an explicit system note about the tool execution
+        const modelParams = {
+          model: 'openai/gpt-5-chat',
+          max_completion_tokens: 2000,
+          temperature: 1.0,
+          presence_penalty: 0.6,
+          frequency_penalty: 0.8,
+        };
+
+        // Use recent window by default for this acknowledgement flow
+        const recentWindow = messages.slice(0, 200);
+        const baseChatMessages = this.buildContext(
+          recentWindow,
+          botUsername,
+          undefined,
+        );
+
+        const finalMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
+          [
+            { role: 'system', content: this.getSystemPrompt(botUsername) },
+            ...baseChatMessages,
+            {
+              role: 'system',
+              content:
+                `REMEMBER - NO METADATA IN YOUR RESPONSE.` +
+                `\n\nNote: A system tool was executed earlier in this turn -> ${toolExecutionSummary}.` +
+                `\nYou should briefly acknowledge that you remembered it if it succeeded.`,
+            },
+          ];
+
+        const followupPreview = this.shrinkMessagesForLog(finalMessages);
+        logger.info(
+          {
+            chatId: triggerMessage.chatTelegramId,
+            messageId: triggerMessage.telegramId,
+            prompt: followupPreview,
+            toolsUsed,
+          },
+          'Generating AI response (after save_to_memory via router)',
+        );
+
+        const finalCompletion = await this.openai.chat.completions.create({
+          ...modelParams,
+          messages: finalMessages,
+        });
+
+        const reply = finalCompletion.choices[0]?.message?.content?.trim();
+        if (!reply) {
+          throw new Error(
+            'Empty response from AI service (after save_to_memory)',
+          );
+        }
+
+        logger.info(
+          {
+            finalCompletion,
+            responseLength: reply.length,
+            tokensUsed: finalCompletion.usage?.total_tokens,
+          },
+          'AI response generated successfully (after save_to_memory)',
+        );
+
+        return { text: reply, toolsUsed };
+      }
+
+      // decision === 'generate_response'
+      const provideAllChatHistory = Boolean(decisionArgs.provideAllChatHistory);
+      const enableWebAccess = Boolean(decisionArgs.enableWebAccess);
+
+      // Prepare context based on decision
+      const modelParams: Omit<
+        OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
+        'messages'
+      > = {
+        model: 'openai/gpt-5-chat',
         max_completion_tokens: 2000,
         temperature: 1.2,
         presence_penalty: 0.6,
         frequency_penalty: 0.8,
       };
 
-      const initialCompletion = await this.openai.chat.completions.create({
-        ...completionParams,
-        messages: baseMessages,
-        tools,
-      });
-
-      const assistantProposedMessage = initialCompletion.choices[0]?.message;
-
-      // If the model requested tool calls, execute them and follow up with another completion
-      const toolCalls = assistantProposedMessage?.tool_calls || [];
-      const toolsUsed: string[] = [];
-      if (Array.isArray(toolCalls) && toolCalls.length > 0) {
-        logger.info(
-          {
-            initialCompletion,
-            toolCalls,
-          },
-          'Tool calls requested by the model',
-        );
-
-        type ToolResultParam = Extract<
-          OpenAI.Chat.Completions.ChatCompletionMessageParam,
-          { role: 'tool' }
-        >;
-
-        const toolResultMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
-          [];
-        for (const call of toolCalls as ReadonlyArray<OpenAI.Chat.Completions.ChatCompletionMessageToolCall>) {
-          const toolName = call?.function?.name;
-          const toolArgsStr = call?.function?.arguments || '{}';
-          let args: Record<string, unknown> = {};
-          try {
-            args = JSON.parse(toolArgsStr);
-          } catch {
-            args = {};
-          }
-
-          if (toolName === 'save_to_memory') {
-            const textToRemember = String(args.text || '').trim();
-            if (textToRemember.length > 0) {
-              try {
-                const memoryModel = database.getMemoryModel();
-                await memoryModel.addMemory({
-                  chatTelegramId: triggerMessage.chatTelegramId,
-                  addedByUserTelegramId: triggerMessage.userTelegramId,
-                  text: textToRemember,
-                  sourceMessageTelegramId: triggerMessage.telegramId,
-                });
-                const content = JSON.stringify({
-                  status: 'success',
-                  text: textToRemember,
-                });
-                const toolMsg: ToolResultParam = {
-                  role: 'tool',
-                  tool_call_id: call.id,
-                  content,
-                };
-                toolResultMessages.push(toolMsg);
-                toolsUsed.push('save_to_memory');
-              } catch (error) {
-                logger.error(error, 'Failed to save memory');
-                const content = JSON.stringify({
-                  status: 'error',
-                  error: String(error),
-                });
-                const toolMsg: ToolResultParam = {
-                  role: 'tool',
-                  tool_call_id: call.id,
-                  content,
-                };
-                toolResultMessages.push(toolMsg);
-              }
-            } else {
-              const content = JSON.stringify({
-                status: 'error',
-                error: 'Empty text',
-              });
-              const toolMsg: ToolResultParam = {
-                role: 'tool',
-                tool_call_id: call.id,
-                content,
-              };
-              toolResultMessages.push(toolMsg);
-            }
-          }
-        }
-
-        // Follow-up completion including only the current tool call context
-        const followupMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
-          [...baseMessages, assistantProposedMessage!, ...toolResultMessages];
-        const followupPromptPreview =
-          this.shrinkMessagesForLog(followupMessages);
-        logger.info(
-          {
-            chatId: triggerMessage.chatTelegramId,
-            messageId: triggerMessage.telegramId,
-            toolCallsCount: toolCalls.length,
-            prompt: followupPromptPreview,
-          },
-          'Generating AI response (after tool call)',
-        );
-
-        const followupCompletion = await this.openai.chat.completions.create({
-          ...completionParams,
-          messages: followupMessages,
-        });
-
-        const replyTextAfterToolCall =
-          followupCompletion.choices[0]?.message?.content?.trim();
-        if (!replyTextAfterToolCall) {
-          throw new Error('Empty response from AI service (after tool call)');
-        }
-
-        logger.info(
-          {
-            followupCompletion,
-            chatId: triggerMessage.chatTelegramId,
-            responseLength: replyTextAfterToolCall.length,
-            tokensUsed: followupCompletion.usage?.total_tokens,
-          },
-          'AI response generated successfully (after tool call)',
-        );
-        return { text: replyTextAfterToolCall, toolsUsed };
+      if (enableWebAccess) {
+        // @ts-expect-error OpenRouter web plugin passthrough
+        modelParams.plugins = [{ id: 'web' }];
       }
 
-      // No tool calls; use the first response content
-      const replyText = initialCompletion.choices[0]?.message?.content?.trim();
+      const contextMessages = this.buildContext(
+        provideAllChatHistory ? messages : messages.slice(0, 200),
+        botUsername,
+        provideAllChatHistory ? historicalContextSections : undefined,
+      );
+
+      const baseMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
+        [
+          { role: 'system', content: this.getSystemPrompt(botUsername) },
+          ...contextMessages,
+          {
+            role: 'system',
+            content: `REMEMBER - NO METADATA IN YOUR RESPONSE.`,
+          },
+        ];
+
+      const genPreview = this.shrinkMessagesForLog(baseMessages);
+      logger.info(
+        {
+          chatId: triggerMessage.chatTelegramId,
+          messageId: triggerMessage.telegramId,
+          provideAllChatHistory,
+          enableWebAccess,
+          prompt: genPreview,
+        },
+        'Generating AI response (router: generate_response)',
+      );
+
+      const completion = await this.openai.chat.completions.create({
+        ...modelParams,
+        messages: baseMessages,
+      });
+
+      const replyText = completion.choices[0]?.message?.content?.trim();
       if (!replyText) {
         throw new Error('Empty response from AI service');
       }
 
       logger.info(
         {
-          initialCompletion,
+          completion,
           chatId: triggerMessage.chatTelegramId,
           responseLength: replyText.length,
-          tokensUsed: initialCompletion.usage?.total_tokens,
+          tokensUsed: completion.usage?.total_tokens,
         },
         'AI response generated successfully',
       );
+
       return { text: replyText, toolsUsed: [] };
     } catch (error) {
       logger.error(error, 'Failed to generate AI response');
-
       throw new Error(
         'Failed to generate AI response. Please try again later.',
       );
