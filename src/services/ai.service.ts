@@ -125,10 +125,10 @@ export class AiService {
   ): Promise<AiResponseResult> {
     try {
       // 1) Fast router: Kimi K2 decides what to do based on the trigger + up to 50 previous messages
-      const routerInputMessages = this.buildContext(
-        messages.slice(0, 51),
-        botUsername,
-      );
+      const routerInputMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+        { role: 'system', content: this.getRouterSystemPrompt() },
+        ...this.buildContext(messages.slice(0, 51), botUsername),
+      ];
 
       const routerTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
         {
@@ -264,7 +264,7 @@ export class AiService {
           }
         }
 
-        // Generate final reply with gpt-5-chat, including an explicit system note about the tool execution
+        // Generate final reply with gpt-5-chat. Include the literal assistant tool call and tool result in the context.
         const modelParams = {
           model: 'openai/gpt-5-chat',
           max_completion_tokens: 2000,
@@ -281,18 +281,38 @@ export class AiService {
           undefined,
         );
 
-        const finalMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
-          [
-            { role: 'system', content: this.getSystemPrompt(botUsername) },
-            ...baseChatMessages,
+        const toolCallId = `call_${Date.now()}`;
+        const assistantToolCallMsg: OpenAI.Chat.Completions.ChatCompletionMessageParam = {
+          role: 'assistant',
+          tool_calls: [
             {
-              role: 'system',
-              content:
-                `REMEMBER - NO METADATA IN YOUR RESPONSE.` +
-                `\n\nNote: A system tool was executed earlier in this turn -> ${toolExecutionSummary}.` +
-                `\nYou should briefly acknowledge that you remembered it if it succeeded.`,
+              id: toolCallId,
+              type: 'function',
+              function: {
+                name: 'save_to_memory',
+                arguments: JSON.stringify({ text: textToRemember }),
+              },
             },
-          ];
+          ],
+        } as any;
+
+        const toolResultMsg: OpenAI.Chat.Completions.ChatCompletionMessageParam = {
+          role: 'tool',
+          tool_call_id: toolCallId,
+          content: JSON.stringify(
+            textToRemember.length > 0 && toolsUsed.includes('save_to_memory')
+              ? { status: 'success', text: textToRemember }
+              : { status: 'error', error: toolExecutionSummary },
+          ),
+        } as any;
+
+        const finalMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+          { role: 'system', content: this.getSystemPrompt(botUsername) },
+          ...baseChatMessages,
+          assistantToolCallMsg,
+          toolResultMsg,
+          { role: 'system', content: 'REMEMBER - NO METADATA IN YOUR RESPONSE.' },
+        ];
 
         const followupPreview = this.shrinkMessagesForLog(finalMessages);
         logger.info(
@@ -440,6 +460,22 @@ export class AiService {
 — capabilities (provided in the greeting message - you do not have to use it, just providing it for the context) —
 ${getStartMessage(botUsername)}
 `;
+  }
+
+  private getRouterSystemPrompt(): string {
+    return (
+      'You are a fast, lightweight router. Your ONLY job is to call exactly ONE tool.' +
+      '\n- Call save_to_memory(text) ONLY when the CURRENT user explicitly asks to remember/save/memorize something (including common typos like "rememder", "remembed").' +
+      '\n  Examples that REQUIRE save_to_memory:' +
+      '\n   • "remember my birthday is May 5"' +
+      '\n   • "save this preference: dark mode"' +
+      '\n   • "запомни: меня зовут Саша"' +
+      '\n- Otherwise call generate_response(provideAllChatHistory, enableWebAccess).' +
+      '\n  * provideAllChatHistory=true when the user asks to analyze/compare/summarize the conversation, references long-running debates, or requests older commitments.' +
+      '\n  * provideAllChatHistory=false when the reply concerns the recent exchange and does not need long-range context.' +
+      '\n  * enableWebAccess=true only when the user requests external, time-sensitive, or unknown info beyond the chat; otherwise false for speed.' +
+      '\nNever output a normal reply. Always use a tool call.'
+    );
   }
 
   private buildContext(
