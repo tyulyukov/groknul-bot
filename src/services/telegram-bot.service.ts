@@ -18,6 +18,8 @@ import { MessageReaction } from '../database/models/Message.js';
 import { API_CONSTANTS } from 'grammy';
 import { markdownToTelegramHtml } from '../utils/markdown-to-telegram-html.js';
 import { MESSAGE_TYPE, MessageType } from '../common/message-types.js';
+import type { Memory } from '../database/models/Memory.js';
+import type { Summary } from '../database/models/Summary.js';
 
 interface SessionData {
   messageCount: number;
@@ -730,15 +732,17 @@ export class TelegramBotService {
         return;
       }
 
-      // Build hierarchical historical context sections
-      const historicalSections: string[] =
-        await this.buildHistoricalContextSections(chatId);
+      // Fetch memories and summaries separately
+      const { memories, summaries } = await this.fetchMemoriesAndSummaries(
+        chatId,
+      );
 
       const aiResponse = await this.aiService.generateResponse(
         recentMessages,
         dbTriggerMessage,
         this.botUsername,
-        historicalSections,
+        memories,
+        summaries,
       );
 
       // If tools were used, emit a technical message
@@ -827,22 +831,16 @@ export class TelegramBotService {
     }
   }
 
-  private async buildHistoricalContextSections(
+  private async fetchMemoriesAndSummaries(
     chatId: number,
-  ): Promise<string[]> {
+  ): Promise<{ memories: Memory[]; summaries: Summary[] }> {
     const summaryModel = database.getSummaryModel();
     const memoryModel = database.getMemoryModel();
     const messageModel = database.getMessageModel();
-    const sections: string[] = [];
-
-    // Include pinned chat memory (user-stated facts to honor in replies)
     const memories = await memoryModel.listByChat(chatId, 100);
-    if (memories.length > 0) {
-      const lines = memories.map((m) => `• ${m.text}`);
-      sections.push(
-        `Pinned chat memory (facts to honor in replies):\n${lines.join('\n')}`,
-      );
-    }
+    const summaries: Summary[] = [];
+
+    // Summaries assembly
 
     // Highest-level summaries first (very old), then lower levels, then level-0 ranges, then recent exact messages (added elsewhere)
     // Find highest existing level
@@ -853,13 +851,13 @@ export class TelegramBotService {
     const maxLevel = probeLevel - 1;
 
     for (let l = maxLevel; l >= 1; l--) {
-      const summaries = await summaryModel.getByLevelAscending(chatId, l);
-      for (const s of summaries) {
+      const range = await summaryModel.getByLevelAscending(chatId, l);
+      for (const s of range) {
         const title =
           l === maxLevel
             ? 'Very long time ago messages: SUMMARY of previous SUMMARIES'
             : 'Older messages: SUMMARY of previous SUMMARIES';
-        sections.push(`${title}\n${s.summary}`);
+        summaries.push({ ...s, summary: `${title}\n${s.summary}` });
       }
     }
 
@@ -888,10 +886,10 @@ export class TelegramBotService {
       const distanceFromEnd = lastIncludedIdx - b; // 0 = nearest to present
       const lower = (distanceFromEnd + 1) * 200; // 200, 400, 600, ...
       const upper = lower + 200; // 400, 600, 800, ...
-      sections.push(`${upper}-${lower} messages:\n${s.summary}`);
+      summaries.push({ ...s, summary: `${upper}-${lower} messages:\n${s.summary}` });
     }
 
-    return sections;
+    return { memories, summaries };
   }
 
   private getMessageType(message: TelegramMessage): MessageType {

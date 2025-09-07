@@ -8,6 +8,8 @@ import {
 import { TelegramUser } from '../database/models/TelegramUser.js';
 import { getStartMessage } from './telegram-bot.service.js';
 import { database } from '../database/index.js';
+import { Memory } from '../database/models/Memory.js';
+import { Summary } from '../database/models/Summary.js';
 
 // Public types for AI results and tool usage
 export interface AiResponseResult {
@@ -121,7 +123,8 @@ export class AiService {
     messages: PopulatedMessage[],
     triggerMessage: PopulatedMessage,
     botUsername: string,
-    historicalContextSections?: string[],
+    memories?: Memory[],
+    summaries?: Summary[],
   ): Promise<AiResponseResult> {
     try {
       // 1) Fast router: Kimi K2 decides what to do based on the trigger + up to 50 previous messages
@@ -275,11 +278,7 @@ export class AiService {
 
         // Use recent window by default for this acknowledgement flow
         const recentWindow = messages.slice(0, 200);
-        const baseChatMessages = this.buildContext(
-          recentWindow,
-          botUsername,
-          undefined,
-        );
+        const baseChatMessages = this.buildContext(recentWindow, botUsername, memories);
 
         const toolCallId = `call_${Date.now()}`;
         const assistantToolCallMsg: OpenAI.Chat.Completions.ChatCompletionMessageParam = {
@@ -373,7 +372,8 @@ export class AiService {
       const contextMessages = this.buildContext(
         provideAllChatHistory ? messages : messages.slice(0, 200),
         botUsername,
-        provideAllChatHistory ? historicalContextSections : undefined,
+        memories,
+        provideAllChatHistory ? summaries : undefined,
       );
 
       const baseMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
@@ -481,7 +481,8 @@ ${getStartMessage(botUsername)}
   private buildContext(
     messages: PopulatedMessage[],
     botUsername: string,
-    historicalContextSections?: string[],
+    memories?: Memory[],
+    summaries?: Summary[],
   ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
     // Helper functions for formatting message metadata
     const formatTimestamp = (date: Date): string =>
@@ -614,14 +615,26 @@ ${getStartMessage(botUsername)}
       return { ...m, content: `${labelNumber}:\n${content}` };
     });
 
-    const historicalBlocks: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
-      (historicalContextSections || []).map((block) => ({
+    const memoryBlocks: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+    if (memories && memories.length > 0) {
+      const lines = memories.map((m) => `• ${m.text}`);
+      memoryBlocks.push({
         role: 'system',
-        content: block,
-      }));
+        content: `Pinned chat memory (facts to honor in replies):\n${lines.join('\n')}`,
+      });
+    }
 
-    return [...historicalBlocks, ...chronological];
+    const summaryBlocks: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+    if (summaries && summaries.length > 0) {
+      // Assume summaries are pre-ordered oldest -> newest
+      for (const s of summaries) {
+        summaryBlocks.push({ role: 'system', content: s.summary });
+      }
+    }
+
+    return [...memoryBlocks, ...summaryBlocks, ...chronological];
   }
+
 
   private shrinkMessagesForLog(
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
@@ -639,15 +652,15 @@ ${getStartMessage(botUsername)}
 
       let previewContent: unknown;
       if (typeof content === 'string') {
-        previewContent = content.slice(0, 500);
+        previewContent = content;
       } else if (Array.isArray(content)) {
         previewContent = content.map((c) =>
           typeof c === 'string'
-            ? c.slice(0, 200)
-            : { ...c, text: (c as any).text?.slice?.(0, 200) },
+            ? c
+            : { ...c, text: (c as any).text },
         );
       } else if (content && typeof content === 'object') {
-        previewContent = JSON.stringify(content).slice(0, 500);
+        previewContent = JSON.stringify(content);
       } else {
         previewContent = content ?? null;
       }
