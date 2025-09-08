@@ -37,13 +37,15 @@ I'm a bold, opinionated, yet helpful group chat assistant that observes conversa
 • I'll respond with contextual information based on recent group conversation
 
 <b>Features:</b>
-✨ Context-aware responses using AI
-📝 I remember the conversation history
-🔄 I track message edits and changes
-🎭 I track message reactions (requires admin permissions)
-🎯 I only respond when specifically mentioned or replied to
-💬 I match your conversation style and language
-🧠 I provide detailed information when you ask for it
+✨ Context-aware AI replies
+🧠 Long-term memory when you explicitly say “remember …”
+🧩 Hierarchical chat summaries for long-range context
+🖼️ Image understanding for photos/documents with concise context stored
+📝 Full message history with edit tracking
+🎭 Reactions tracking (emoji and custom emoji)
+🎯 Responds only when mentioned or when you reply to me
+🌐 Optional web access for fresh info (only when asked)
+💬 Matches your conversation style and language
 
 <b>Note:</b> I only work in group chats, not in private messages.
 
@@ -733,9 +735,8 @@ export class TelegramBotService {
       }
 
       // Fetch memories and summaries separately
-      const { memories, summaries } = await this.fetchMemoriesAndSummaries(
-        chatId,
-      );
+      const { memories, summaries } =
+        await this.fetchMemoriesAndSummaries(chatId);
 
       const aiResponse = await this.aiService.generateResponse(
         recentMessages,
@@ -886,7 +887,10 @@ export class TelegramBotService {
       const distanceFromEnd = lastIncludedIdx - b; // 0 = nearest to present
       const lower = (distanceFromEnd + 1) * 200; // 200, 400, 600, ...
       const upper = lower + 200; // 400, 600, 800, ...
-      summaries.push({ ...s, summary: `${upper}-${lower} messages:\n${s.summary}` });
+      summaries.push({
+        ...s,
+        summary: `${upper}-${lower} messages:\n${s.summary}`,
+      });
     }
 
     return { memories, summaries };
