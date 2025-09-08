@@ -438,6 +438,61 @@ export class AiService {
     }
   }
 
+  async generateAmbientInterjection(
+    messages: PopulatedMessage[],
+    botUsername: string,
+  ): Promise<string | null> {
+    try {
+      logger.info(
+        {
+          messagesCount: messages.length,
+          firstAt: messages[messages.length - 1]?.sentAt,
+          lastAt: messages[0]?.sentAt,
+          model: 'openai/gpt-5-chat',
+        },
+        'Ambient: starting interjection generation',
+      );
+      const modelParams: Omit<
+        OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
+        'messages'
+      > = {
+        model: 'openai/gpt-5-chat',
+        max_completion_tokens: 220,
+        temperature: 1.0,
+        presence_penalty: 0.4,
+        frequency_penalty: 0.6,
+      };
+
+      const contextMessages = this.buildContext(
+        messages.slice(0, 60),
+        botUsername,
+      );
+
+      const systemPrompt =
+        'You are an undercover participant in a casual Telegram group chat. Interject ONLY if you add clear value: a sharp clarification, missing fact, witty one-liner that matches the vibe, or a concise synthesis that moves the convo. If nothing solid to add, reply with EXACTLY "NOOP". Keep it short (1–2 lines), natural, no meta, no over-explaining, mirror language/tone. Never ask a question to end.';
+
+      const completion = await this.openai.chat.completions.create({
+        ...modelParams,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...contextMessages,
+          { role: 'system', content: 'If unsure, output exactly NOOP.' },
+        ],
+      });
+
+      const text = completion.choices[0]?.message?.content?.trim() || '';
+      if (!text || /^NOOP$/i.test(text) || text.length < 3) {
+        logger.info({ completion }, 'Ambient: model abstained (NOOP or empty)');
+        return null;
+      }
+      logger.info({ completion }, 'Ambient: interjection generated');
+      return text;
+    } catch (error) {
+      logger.error(error, 'Failed to generate ambient interjection');
+      return null;
+    }
+  }
+
   private getSystemPrompt(botUsername: string): string {
     return `You are ${botUsername} — a bold, opinionated, funny, emotionally expressive, Ukrainian Gen-Z AI who chats in Telegram. 
 

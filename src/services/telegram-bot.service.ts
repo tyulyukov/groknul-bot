@@ -23,6 +23,8 @@ import type { Summary } from '../database/models/Summary.js';
 
 interface SessionData {
   messageCount: number;
+  lastAmbientAt?: number;
+  sinceAmbientCount: number;
 }
 
 type MyContext = HydrateFlavor<Context & { session: SessionData }>;
@@ -78,7 +80,7 @@ export class TelegramBotService {
 
     this.bot.use(
       session({
-        initial: (): SessionData => ({ messageCount: 0 }),
+        initial: (): SessionData => ({ messageCount: 0, sinceAmbientCount: 0 }),
         storage: adapter,
       }),
     );
@@ -439,6 +441,10 @@ export class TelegramBotService {
       return;
     }
 
+    // Track message counters for ambient gating
+    ctx.session.messageCount = (ctx.session.messageCount || 0) + 1;
+    ctx.session.sinceAmbientCount = (ctx.session.sinceAmbientCount || 0) + 1;
+
     const userModel = database.getTelegramUserModel();
     await userModel.upsertUser({
       telegramId: ctx.from.id,
@@ -590,7 +596,13 @@ export class TelegramBotService {
     if (this.shouldRespond(message, ctx.from.id)) {
       await ctx.replyWithChatAction('typing');
       await this.generateAndSendResponse(ctx, message);
+      return;
     }
+
+    // Try ambient interjection (non-mention, non-reply) with strong gating
+    await this.maybeAmbientInterject(ctx, message).catch((e) =>
+      logger.error(e, 'Ambient interjection failed'),
+    );
   }
 
   private async handleMessageEdit(ctx: MyContext): Promise<void> {
@@ -711,6 +723,125 @@ export class TelegramBotService {
     return !!(
       message.reply_to_message &&
       message.reply_to_message.from?.id === this.bot.botInfo.id
+    );
+  }
+
+  private shouldTryAmbient(ctx: MyContext, message: TelegramMessage): boolean {
+    const cfg = config.telegram.ambient;
+    if (!cfg.enabled) return false;
+
+    if ((message.from as any)?.id === this.bot.botInfo.id) return false;
+
+    const { text, messageType } = this.deriveContentFields(message);
+    if (!text || messageType !== MESSAGE_TYPE.TEXT) return false;
+
+    // Skip if directly mentions or replies to the bot (handled elsewhere)
+    if (text.includes(`@${this.botUsername}`)) return false;
+    if (message.reply_to_message?.from?.id === this.bot.botInfo.id) return false;
+
+    // Cooldowns
+    const now = Date.now();
+    const lastAt = ctx.session.lastAmbientAt || 0;
+    const sinceSec = (now - lastAt) / 1000;
+    if (sinceSec < cfg.minCooldownSec) {
+      logger.info(
+        { sinceSec, minCooldownSec: cfg.minCooldownSec, chatId: ctx.chat?.id },
+        'Ambient gate: cooldown not satisfied',
+      );
+      return false;
+    }
+
+    const sinceMsgs = ctx.session.sinceAmbientCount || 0;
+    if (sinceMsgs < cfg.minGapMessages) {
+      logger.info(
+        { sinceMsgs, minGapMessages: cfg.minGapMessages, chatId: ctx.chat?.id },
+        'Ambient gate: message gap not satisfied',
+      );
+      return false;
+    }
+
+    // Probability gate
+    const roll = Math.random();
+    if (roll >= cfg.probability) {
+      logger.info(
+        { roll, probability: cfg.probability, chatId: ctx.chat?.id },
+        'Ambient gate: probability not passed',
+      );
+      return false;
+    }
+
+    return true;
+  }
+
+  private async maybeAmbientInterject(
+    ctx: MyContext,
+    triggerMessage: TelegramMessage,
+  ): Promise<void> {
+    if (!this.shouldTryAmbient(ctx, triggerMessage)) return;
+
+    const chatId = ctx.chat!.id;
+    const messageModel = database.getMessageModel();
+
+    // Fetch recent messages, then filter by recency window
+    const recent = await messageModel.getRecentMessages(chatId, 120);
+    logger.info(
+      { chatId, fetchedCount: recent.length },
+      'Ambient: fetched recent messages',
+    );
+    const maxAgeMin = config.telegram.ambient.maxContextAgeMinutes;
+    const cutoff = Date.now() - maxAgeMin * 60 * 1000;
+    const recentFresh = recent.filter((m) => new Date(m.sentAt).getTime() >= cutoff);
+    const context = recentFresh.length > 0 ? recentFresh : recent.slice(0, 30);
+    logger.info(
+      {
+        chatId,
+        contextCount: context.length,
+        maxAgeMin,
+        cutoffIso: new Date(cutoff).toISOString(),
+        newestIso: context[0]?.sentAt,
+        oldestIso: context[context.length - 1]?.sentAt,
+      },
+      'Ambient: prepared context window',
+    );
+
+    await ctx.replyWithChatAction('typing');
+    const ambient = await this.aiService.generateAmbientInterjection(
+      context,
+      this.botUsername,
+    );
+
+    if (!ambient) {
+      logger.info({ chatId, triggerId: triggerMessage.message_id }, 'Ambient: model abstained');
+      return;
+    }
+
+    const html = markdownToTelegramHtml(ambient);
+    const sent = await ctx.reply(html, {
+      reply_to_message_id: triggerMessage.message_id,
+    });
+
+    await messageModel.saveMessage({
+      telegramId: sent.message_id,
+      chatTelegramId: chatId,
+      userTelegramId: this.bot.botInfo.id,
+      text: ambient,
+      replyToMessageTelegramId: triggerMessage.message_id,
+      sentAt: new Date(sent.date * 1000),
+      messageType: 'text',
+      payload: JSON.parse(JSON.stringify(sent)),
+    });
+
+    ctx.session.lastAmbientAt = Date.now();
+    ctx.session.sinceAmbientCount = 0;
+
+    logger.info(
+      {
+        chatId,
+        triggerMessageId: triggerMessage.message_id,
+        botMessageId: sent.message_id,
+        textPreview: ambient.slice(0, 160),
+      },
+      'Ambient interjection sent',
     );
   }
 

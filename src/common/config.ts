@@ -11,6 +11,13 @@ interface Config {
     serverHost: string;
     serverPort: number;
     adminIds: number[];
+    ambient: {
+      enabled: boolean;
+      probability: number;
+      minCooldownSec: number;
+      minGapMessages: number;
+      maxContextAgeMinutes: number;
+    };
   };
   openRouter: {
     apiKey: string;
@@ -44,6 +51,26 @@ export const config: Config = {
       .filter((v) => v.length > 0)
       .map((v) => Number(v))
       .filter((v) => Number.isFinite(v)),
+    ambient: {
+      enabled:
+        String(process.env.TELEGRAM_BOT_AMBIENT_ENABLED).toLowerCase() ===
+        'true',
+      probability: parseFloat(
+        process.env.TELEGRAM_BOT_AMBIENT_PROBABILITY || '0.03',
+      ),
+      minCooldownSec: parseInt(
+        process.env.TELEGRAM_BOT_AMBIENT_MIN_COOLDOWN_SEC || '180',
+        10,
+      ),
+      minGapMessages: parseInt(
+        process.env.TELEGRAM_BOT_AMBIENT_MIN_GAP_MESSAGES || '40',
+        10,
+      ),
+      maxContextAgeMinutes: parseInt(
+        process.env.TELEGRAM_BOT_AMBIENT_MAX_CONTEXT_AGE_MINUTES || '90',
+        10,
+      ),
+    },
   },
   openRouter: {
     apiKey: getRequiredEnvVar('OPENROUTER_API_KEY'),
