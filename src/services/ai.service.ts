@@ -128,10 +128,11 @@ export class AiService {
   ): Promise<AiResponseResult> {
     try {
       // 1) Fast router: Kimi K2 decides what to do based on the trigger + up to 50 previous messages
-      const routerInputMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-        { role: 'system', content: this.getRouterSystemPrompt() },
-        ...this.buildContext(messages.slice(0, 51), botUsername),
-      ];
+      const routerInputMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
+        [
+          { role: 'system', content: this.getRouterSystemPrompt() },
+          ...this.buildContext(messages.slice(0, 51), botUsername),
+        ];
 
       const routerTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
         {
@@ -278,40 +279,50 @@ export class AiService {
 
         // Use recent window by default for this acknowledgement flow
         const recentWindow = messages.slice(0, 200);
-        const baseChatMessages = this.buildContext(recentWindow, botUsername, memories);
+        const baseChatMessages = this.buildContext(
+          recentWindow,
+          botUsername,
+          memories,
+        );
 
         const toolCallId = `call_${Date.now()}`;
-        const assistantToolCallMsg: OpenAI.Chat.Completions.ChatCompletionMessageParam = {
-          role: 'assistant',
-          tool_calls: [
-            {
-              id: toolCallId,
-              type: 'function',
-              function: {
-                name: 'save_to_memory',
-                arguments: JSON.stringify({ text: textToRemember }),
+        const assistantToolCallMsg: OpenAI.Chat.Completions.ChatCompletionMessageParam =
+          {
+            role: 'assistant',
+            tool_calls: [
+              {
+                id: toolCallId,
+                type: 'function',
+                function: {
+                  name: 'save_to_memory',
+                  arguments: JSON.stringify({ text: textToRemember }),
+                },
               },
+            ],
+          } as any;
+
+        const toolResultMsg: OpenAI.Chat.Completions.ChatCompletionMessageParam =
+          {
+            role: 'tool',
+            tool_call_id: toolCallId,
+            content: JSON.stringify(
+              textToRemember.length > 0 && toolsUsed.includes('save_to_memory')
+                ? { status: 'success', text: textToRemember }
+                : { status: 'error', error: toolExecutionSummary },
+            ),
+          } as any;
+
+        const finalMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
+          [
+            { role: 'system', content: this.getSystemPrompt(botUsername) },
+            ...baseChatMessages,
+            assistantToolCallMsg,
+            toolResultMsg,
+            {
+              role: 'system',
+              content: 'REMEMBER - NO METADATA IN YOUR RESPONSE.',
             },
-          ],
-        } as any;
-
-        const toolResultMsg: OpenAI.Chat.Completions.ChatCompletionMessageParam = {
-          role: 'tool',
-          tool_call_id: toolCallId,
-          content: JSON.stringify(
-            textToRemember.length > 0 && toolsUsed.includes('save_to_memory')
-              ? { status: 'success', text: textToRemember }
-              : { status: 'error', error: toolExecutionSummary },
-          ),
-        } as any;
-
-        const finalMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-          { role: 'system', content: this.getSystemPrompt(botUsername) },
-          ...baseChatMessages,
-          assistantToolCallMsg,
-          toolResultMsg,
-          { role: 'system', content: 'REMEMBER - NO METADATA IN YOUR RESPONSE.' },
-        ];
+          ];
 
         const followupPreview = this.shrinkMessagesForLog(finalMessages);
         logger.info(
@@ -615,7 +626,8 @@ ${getStartMessage(botUsername)}
       return { ...m, content: `${labelNumber}:\n${content}` };
     });
 
-    const memoryBlocks: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+    const memoryBlocks: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
+      [];
     if (memories && memories.length > 0) {
       const lines = memories.map((m) => `• ${m.text}`);
       memoryBlocks.push({
@@ -624,7 +636,8 @@ ${getStartMessage(botUsername)}
       });
     }
 
-    const summaryBlocks: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+    const summaryBlocks: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
+      [];
     if (summaries && summaries.length > 0) {
       // Assume summaries are pre-ordered oldest -> newest
       for (const s of summaries) {
@@ -634,7 +647,6 @@ ${getStartMessage(botUsername)}
 
     return [...memoryBlocks, ...summaryBlocks, ...chronological];
   }
-
 
   private shrinkMessagesForLog(
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
@@ -652,15 +664,15 @@ ${getStartMessage(botUsername)}
 
       let previewContent: unknown;
       if (typeof content === 'string') {
-        previewContent = content;
+        previewContent = content.slice(0, 500);
       } else if (Array.isArray(content)) {
         previewContent = content.map((c) =>
           typeof c === 'string'
-            ? c
-            : { ...c, text: (c as any).text },
+            ? c.slice(0, 200)
+            : { ...c, text: (c as any).text?.slice?.(0, 200) },
         );
       } else if (content && typeof content === 'object') {
-        previewContent = JSON.stringify(content);
+        previewContent = JSON.stringify(content).slice(0, 500);
       } else {
         previewContent = content ?? null;
       }
