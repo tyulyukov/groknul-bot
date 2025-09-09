@@ -481,7 +481,12 @@ export class AiService {
       });
 
       const text = completion.choices[0]?.message?.content?.trim() || '';
-      if (!text || /^NOOP$/i.test(text) || text.length < 3) {
+      if (
+        !text ||
+        /^NOOP$/i.test(text) ||
+        /^HOOP$/i.test(text) ||
+        text.length < 3
+      ) {
         logger.info({ completion }, 'Ambient: model abstained (NOOP or empty)');
         return null;
       }
