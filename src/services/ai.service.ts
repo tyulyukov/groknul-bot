@@ -393,7 +393,13 @@ export class AiService {
           ...contextMessages,
           {
             role: 'system',
-            content: `REMEMBER - NO METADATA IN YOUR RESPONSE.`,
+            content:
+              `REMEMBER - NO METADATA IN YOUR RESPONSE.` +
+              `\n\n❌ INCORRECT RESPONSE (with metadata):` +
+              `\n\n[2025-08-03 21:52] | Replying to Someone (@someone): "user's message text"` +
+              `\n your text` +
+              `\n\n✅ CORRECT RESPONSE (without metadata):` +
+              `\n\n your text`,
           },
         ];
 
