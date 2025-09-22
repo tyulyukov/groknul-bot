@@ -44,7 +44,7 @@ export class AiService {
 
     const startedAt = Date.now();
     const completion = await this.openai.chat.completions.create({
-      model: 'openai/gpt-5-mini',
+      model: 'openai/gpt-5-nano',
       // @ts-expect-error OpenRouter pass-through for disabling reasoning
       reasoning: { effort: 'low' },
       messages: [
@@ -81,7 +81,7 @@ export class AiService {
         'Starting image summarization',
       );
       const completion = await this.openai.chat.completions.create({
-        model: 'openai/gpt-5-mini',
+        model: 'openai/gpt-5-nano',
         // @ts-expect-error OpenRouter pass-through for disabling reasoning
         reasoning: { effort: 'low' },
         messages: [
