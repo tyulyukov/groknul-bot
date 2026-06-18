@@ -1,0 +1,22 @@
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "Groknul SearXNG"
+
+search:
+  safe_search: 1
+  formats:
+    - html
+    - json
+
+server:
+  bind_address: "127.0.0.1"
+  port: 8080
+  limiter: false
+  image_proxy: false
+  secret_key: "replace-this-with-railway-secret"
+  method: "GET"
+
+ui:
+  static_use_hash: true

@@ -1,7 +1,15 @@
-import { Collection, CreateIndexesOptions, IndexSpecification, ObjectId } from 'mongodb';
+import {
+  Collection,
+  CreateIndexesOptions,
+  IndexSpecification,
+  ObjectId,
+} from 'mongodb';
 import { TelegramUser } from './TelegramUser.js';
 import { MessageType } from '../../common/message-types.js';
 import logger from '../../common/logger.js';
+
+const escapeRegex = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export interface MessageEdit {
   text?: string;
@@ -39,6 +47,11 @@ export interface Message {
   edits: MessageEdit[];
   reactions: MessageReaction[];
   messageType: MessageType;
+  deliveryFormat?: string;
+  deliveryText?: string;
+  deliveryFallbackReason?: string;
+  isDeleted?: boolean;
+  deletedAt?: Date;
   forwardOrigin?: unknown;
   forwardFromUserTelegramId?: number; // Reference to TelegramUser.telegramId
   payload: unknown;
@@ -225,6 +238,11 @@ export class MessageModel {
       edits: [],
       reactions: [],
       messageType: messageData.messageType || 'text',
+      deliveryFormat: messageData.deliveryFormat,
+      deliveryText: messageData.deliveryText,
+      deliveryFallbackReason: messageData.deliveryFallbackReason,
+      isDeleted: messageData.isDeleted,
+      deletedAt: messageData.deletedAt,
       forwardOrigin: messageData.forwardOrigin,
       forwardFromUserTelegramId: messageData.forwardFromUserTelegramId,
       payload: messageData.payload,
@@ -232,7 +250,42 @@ export class MessageModel {
       updatedAt: now,
     };
 
-    await this.collection.insertOne(newMessage);
+    await this.collection.updateOne(
+      {
+        telegramId: newMessage.telegramId,
+        chatTelegramId: newMessage.chatTelegramId,
+      },
+      {
+        $set: {
+          userTelegramId: newMessage.userTelegramId,
+          text: newMessage.text,
+          context: newMessage.context,
+          fileName: newMessage.fileName,
+          replyToMessageTelegramId: newMessage.replyToMessageTelegramId,
+          replyQuoteText: newMessage.replyQuoteText,
+          sentAt: newMessage.sentAt,
+          editDate: newMessage.editDate,
+          messageType: newMessage.messageType,
+          deliveryFormat: newMessage.deliveryFormat,
+          deliveryText: newMessage.deliveryText,
+          deliveryFallbackReason: newMessage.deliveryFallbackReason,
+          isDeleted: newMessage.isDeleted,
+          deletedAt: newMessage.deletedAt,
+          forwardOrigin: newMessage.forwardOrigin,
+          forwardFromUserTelegramId: newMessage.forwardFromUserTelegramId,
+          payload: newMessage.payload,
+          updatedAt: now,
+        },
+        $setOnInsert: {
+          telegramId: newMessage.telegramId,
+          chatTelegramId: newMessage.chatTelegramId,
+          edits: [],
+          reactions: [],
+          createdAt: now,
+        },
+      },
+      { upsert: true },
+    );
     return newMessage;
   }
 
@@ -271,7 +324,7 @@ export class MessageModel {
     };
 
     await this.collection.updateOne(
-      { messageId, chatId },
+      { telegramId: messageId, chatTelegramId: chatId },
       {
         $set: {
           text: newText,
@@ -329,6 +382,58 @@ export class MessageModel {
     );
   }
 
+  async replaceUserReactions(
+    messageTelegramId: number,
+    chatTelegramId: number,
+    userTelegramId: number,
+    reactions: Omit<MessageReaction, 'userTelegramId' | 'addedAt'>[],
+  ): Promise<void> {
+    const message = await this.findByMessageTelegramId(
+      messageTelegramId,
+      chatTelegramId,
+    );
+    if (!message) {
+      throw new Error('Message not found');
+    }
+
+    const now = new Date();
+    const otherUserReactions = message.reactions.filter(
+      (reaction) => reaction.userTelegramId !== userTelegramId,
+    );
+    const replacementReactions: MessageReaction[] = reactions.map((reaction) => ({
+      ...reaction,
+      userTelegramId,
+      addedAt: now,
+    }));
+
+    await this.collection.updateOne(
+      { telegramId: messageTelegramId, chatTelegramId },
+      {
+        $set: {
+          reactions: [...otherUserReactions, ...replacementReactions],
+          updatedAt: now,
+        },
+      },
+    );
+  }
+
+  async markDeleted(
+    messageTelegramId: number,
+    chatTelegramId: number,
+  ): Promise<void> {
+    const now = new Date();
+    await this.collection.updateOne(
+      { telegramId: messageTelegramId, chatTelegramId },
+      {
+        $set: {
+          isDeleted: true,
+          deletedAt: now,
+          updatedAt: now,
+        },
+      },
+    );
+  }
+
   async getRecentMessages(
     chatId: number,
     limit: number,
@@ -341,6 +446,41 @@ export class MessageModel {
     return await this.collection
       .aggregate<PopulatedMessage>(pipeline)
       .toArray();
+  }
+
+  async searchMessages(input: {
+    chatTelegramId: number;
+    query?: string;
+    since?: Date;
+    until?: Date;
+    fromUserTelegramId?: number;
+    limit: number;
+  }): Promise<PopulatedMessage[]> {
+    const match: Record<string, unknown> = {
+      chatTelegramId: input.chatTelegramId,
+    };
+
+    if (input.query?.trim()) {
+      match.text = { $regex: escapeRegex(input.query.trim()), $options: 'i' };
+    }
+
+    if (input.since || input.until) {
+      const sentAt: Record<string, Date> = {};
+      if (input.since) sentAt.$gte = input.since;
+      if (input.until) sentAt.$lte = input.until;
+      match.sentAt = sentAt;
+    }
+
+    if (typeof input.fromUserTelegramId === 'number') {
+      match.userTelegramId = input.fromUserTelegramId;
+    }
+
+    const pipeline = this.buildPipeline(match, {
+      sort: { sentAt: -1 },
+      limit: input.limit,
+    });
+
+    return this.collection.aggregate<PopulatedMessage>(pipeline).toArray();
   }
 
   async getMessagesAscending(
@@ -377,6 +517,16 @@ export class MessageModel {
   }
 
   async createIndexes(): Promise<void> {
+    try {
+      await this.collection.dropIndex('telegramId_1');
+      logger.info('Dropped legacy global telegramId index');
+    } catch (error) {
+      logger.info(
+        { error },
+        'Legacy global telegramId index not present or already removed',
+      );
+    }
+
     const indexDefinitions: {
       keys: IndexSpecification;
       options?: CreateIndexesOptions;
@@ -400,13 +550,12 @@ export class MessageModel {
         description: 'Reply lookup compound index',
       },
       {
-        keys: { 'reactions.userTelegramId': 1 },
-        description: 'Reaction user lookup index',
+        keys: { chatTelegramId: 1, text: 1 },
+        description: 'Scoped text search prefilter index',
       },
       {
-        keys: { telegramId: 1 },
-        options: { unique: true },
-        description: 'Unique message ID index',
+        keys: { 'reactions.userTelegramId': 1 },
+        description: 'Reaction user lookup index',
       },
     ];
 

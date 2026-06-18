@@ -1,0 +1,15 @@
+.git
+.gitignore
+.DS_Store
+.env
+.env.*
+!.env.example
+.idea
+node_modules
+dist
+dist-test
+coverage
+npm-debug.log*
+*.log
+1.json
+2.json

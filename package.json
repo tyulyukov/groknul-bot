@@ -6,8 +6,11 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/app.js",
-    "dev": "tsx src/app.ts | pino-pretty --colorize --levelFirst --translateTime \"HH:MM:ss\"",
-    "clean": "rm -rf dist"
+    "dev": "tsx watch src/app.ts | pino-pretty --colorize --levelFirst --translateTime \"HH:MM:ss\"",
+    "typecheck": "tsc --noEmit",
+    "build:test": "tsc -p tsconfig.test.json",
+    "test": "TELEGRAM_BOT_API_KEY=test OPENROUTER_API_KEY=test MONGODB_URI=mongodb://localhost:27017/test npm run build:test && TELEGRAM_BOT_API_KEY=test OPENROUTER_API_KEY=test MONGODB_URI=mongodb://localhost:27017/test node --test \"dist-test/test/**/*.test.js\"",
+    "clean": "rm -rf dist dist-test"
   },
   "type": "module",
   "dependencies": {
@@ -35,7 +38,8 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.3",
     "pino-pretty": "^13.0.0",
-    "prettier": "^3.6.2"
+    "prettier": "^3.6.2",
+    "tsx": "^4.19.2"
   },
   "engines": {
     "node": ">=18.0.0"

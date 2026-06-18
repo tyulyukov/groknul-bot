@@ -4,10 +4,12 @@ import { config } from '../common/config.js';
 import logger from '../common/logger.js';
 import { TelegramBotService } from '../services/telegram-bot.service.js';
 import { webhookCallback } from 'grammy';
+import type { ServerType } from '@hono/node-server';
 
 export class WebhookServer {
   private app: Hono;
   private telegramBotService: TelegramBotService;
+  private server: ServerType | null = null;
 
   constructor(telegramBotService: TelegramBotService) {
     this.app = new Hono();
@@ -64,7 +66,7 @@ export class WebhookServer {
 
     logger.info({ host, port }, 'Starting webhook server');
 
-    serve({
+    this.server = serve({
       fetch: this.app.fetch,
       port,
       hostname: host,
@@ -83,6 +85,7 @@ export class WebhookServer {
       logger.info({ webhookUrl }, 'Setting up webhook');
 
       await bot.api.setWebhook(webhookUrl, {
+        allowed_updates: ['message', 'edited_message', 'message_reaction'],
         secret_token: config.telegram.webhookSecret,
       });
 
@@ -103,6 +106,21 @@ export class WebhookServer {
       } catch (error) {
         logger.error(error, 'Failed to remove webhook');
       }
+    }
+
+    if (this.server) {
+      await new Promise<void>((resolve, reject) => {
+        this.server!.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+      this.server = null;
+      logger.info('Webhook server closed');
     }
   }
 }

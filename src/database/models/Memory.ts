@@ -1,5 +1,13 @@
-import { Collection, CreateIndexesOptions, IndexSpecification, ObjectId } from 'mongodb';
+import {
+  Collection,
+  CreateIndexesOptions,
+  IndexSpecification,
+  ObjectId,
+} from 'mongodb';
 import logger from '../../common/logger.js';
+
+const escapeRegex = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export interface Memory {
   _id?: string;
@@ -65,6 +73,23 @@ export class MemoryModel {
       .toArray();
   }
 
+  async searchByChat(
+    chatTelegramId: number,
+    query: string | undefined,
+    limit = 20,
+  ): Promise<Memory[]> {
+    const filter: Record<string, unknown> = { chatTelegramId };
+    if (query?.trim()) {
+      filter.text = { $regex: escapeRegex(query.trim()), $options: 'i' };
+    }
+
+    return this.collection
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .toArray();
+  }
+
   async deleteById(chatTelegramId: number, id: string): Promise<boolean> {
     let objectId: ObjectId;
     try {
@@ -72,9 +97,10 @@ export class MemoryModel {
     } catch {
       return false;
     }
-    const res = await this.collection.deleteOne({ _id: objectId as unknown as string, chatTelegramId });
+    const res = await this.collection.deleteOne({
+      _id: objectId as unknown as string,
+      chatTelegramId,
+    });
     return res.deletedCount === 1;
   }
 }
-
-

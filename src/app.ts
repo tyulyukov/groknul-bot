@@ -89,6 +89,10 @@ class Application {
         await this.webhookServer.stop();
       }
 
+      if (this.telegramBotService) {
+        await this.telegramBotService.stop();
+      }
+
       await database.disconnect();
 
       logger.info('Application shutdown completed');

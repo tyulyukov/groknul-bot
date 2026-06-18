@@ -27,10 +27,10 @@ The name is inspired by Twitter/X’s Grok. "groknul" also playfully echoes the 
 - **Bot framework**: grammY + `hydrate`, `parse-mode`, `auto-retry`, `throttler`, Mongo session storage
 - **Database**: MongoDB (messages, users, memories, summaries)
 - **AI (OpenRouter)**:
-  - Router: `moonshotai/kimi-k2`
-  - Chat: `openai/gpt-5-chat`
-  - Summarization & Vision: `openai/gpt-5-mini`
-  - Optional web access plugin when explicitly requested
+  - Reply: `openai/gpt-5.5`
+  - Agent/router: `openai/gpt-5.4-mini`
+  - Summarization & Vision: `openai/gpt-5.4-mini`
+  - Web search: self-hosted SearXNG
 - **Server**: Hono (Node) for webhook endpoints
 - **Logging**: Pino
 

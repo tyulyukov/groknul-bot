@@ -88,12 +88,35 @@ export const markdownToTelegramHtml = (markdown: string): string => {
     (_m, _hashes: string, title: string) => `<b>${title}</b>`,
   );
 
-  // 10) Restore inline code
+  // 10) Blockquotes
+  text = text.replace(
+    /^(?:&gt;[ \t]?.+(?:\n|$))+/gm,
+    (block: string) =>
+      `<blockquote>${block
+        .split('\n')
+        .map((line) => line.replace(/^&gt;[ \t]?/, ''))
+        .filter((line) => line.length > 0)
+        .join('\n')}</blockquote>`,
+  );
+
+  // 11) Spoilers
+  text = text.replace(
+    /\|\|([^|\n][\s\S]*?)\|\|/g,
+    (_m, inner: string) => `<tg-spoiler>${inner}</tg-spoiler>`,
+  );
+
+  // 12) Markdown tables remain readable in Telegram as preformatted text.
+  text = text.replace(
+    /(^\|.+\|\n^\|(?:\s*:?-+:?\s*\|)+\n(?:^\|.+\|\n?)+)/gm,
+    (table: string) => `<pre>${table}</pre>`,
+  );
+
+  // 13) Restore inline code
   inlineCodes.forEach(({ placeholder, html }) => {
     text = text.replaceAll(placeholder, html);
   });
 
-  // 11) Restore code blocks
+  // 14) Restore code blocks
   codeBlocks.forEach(({ placeholder, html }) => {
     text = text.replaceAll(placeholder, html);
   });

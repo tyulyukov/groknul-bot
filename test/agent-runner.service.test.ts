@@ -1,0 +1,197 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { AgentRunner } from '../src/services/agent-runner.service.js';
+import type {
+  AgentChatClient,
+  AgentToolRegistry,
+} from '../src/services/agent-runner.service.js';
+
+test('AgentRunner stops after 10 tool calls', async () => {
+  let completions = 0;
+  const client: AgentChatClient = {
+    complete: async () => {
+      completions += 1;
+      return {
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: `call_${completions}`,
+              type: 'function',
+              function: {
+                name: 'get_recent_messages',
+                arguments: '{"limit":1}',
+              },
+            },
+          ],
+        },
+        usage: { total_tokens: 1 },
+      };
+    },
+  };
+  let executed = 0;
+  const registry: AgentToolRegistry = {
+    getToolDefinitions: () => [
+      {
+        type: 'function',
+        function: {
+          name: 'get_recent_messages',
+          description: 'Get recent messages',
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+    ],
+    execute: async () => {
+      executed += 1;
+      return { status: 'ok', messages: [] };
+    },
+  };
+
+  const runner = new AgentRunner(client, registry, {
+    model: 'agent-model',
+    maxToolCalls: 10,
+  });
+
+  const result = await runner.run({
+    chatTelegramId: -100,
+    triggerMessageId: 123,
+    botUsername: 'groknul_bot',
+    triggerText: '@groknul_bot search history',
+  });
+
+  assert.equal(executed, 10);
+  assert.equal(result.status, 'tool_limit_reached');
+  assert.equal(result.output.items[0]?.plainText, 'I need a narrower request to continue safely.');
+});
+
+test('AgentRunner preserves model text when JSON has the wrong final shape', async () => {
+  const client: AgentChatClient = {
+    complete: async () => ({
+      message: {
+        role: 'assistant',
+        content: '{"answer":"still useful"}',
+      },
+    }),
+  };
+  const registry: AgentToolRegistry = {
+    getToolDefinitions: () => [],
+    execute: async () => {
+      throw new Error('unused');
+    },
+  };
+  const runner = new AgentRunner(client, registry, {
+    model: 'agent-model',
+    maxToolCalls: 10,
+  });
+
+  const result = await runner.run({
+    chatTelegramId: -100,
+    triggerMessageId: 123,
+    botUsername: 'groknul_bot',
+  });
+
+  assert.equal(result.status, 'final');
+  assert.deepEqual(result.output.items, [
+    {
+      richMarkdown: '{"answer":"still useful"}',
+      plainText: '{"answer":"still useful"}',
+    },
+  ]);
+});
+
+test('AgentRunner does not mark invalid send tool payloads as sent', async () => {
+  let completions = 0;
+  const client: AgentChatClient = {
+    complete: async () => {
+      completions += 1;
+      if (completions === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            tool_calls: [
+              {
+                id: 'call_1',
+                type: 'function',
+                function: {
+                  name: 'send',
+                  arguments: '{"items":[]}',
+                },
+              },
+            ],
+          },
+        };
+      }
+
+      return {
+        message: {
+          role: 'assistant',
+          content: 'fallback text',
+        },
+      };
+    },
+  };
+  const registry: AgentToolRegistry = {
+    getToolDefinitions: () => [],
+    execute: async () => ({ status: 'invalid_args' }),
+  };
+  const runner = new AgentRunner(client, registry, {
+    model: 'agent-model',
+    maxToolCalls: 10,
+  });
+
+  const result = await runner.run({
+    chatTelegramId: -100,
+    triggerMessageId: 123,
+    botUsername: 'groknul_bot',
+  });
+
+  assert.equal(result.status, 'final');
+  assert.equal(result.output.items[0]?.plainText, 'fallback text');
+});
+
+test('AgentRunner normalizes structured final output through the send payload schema', async () => {
+  const client: AgentChatClient = {
+    complete: async () => ({
+      message: {
+        role: 'assistant',
+        content: JSON.stringify({
+          items: [
+            {
+              plainText: 'poll without enough options',
+              poll: { question: 'q', options: ['one'] },
+            },
+          ],
+        }),
+      },
+    }),
+  };
+  const registry: AgentToolRegistry = {
+    getToolDefinitions: () => [],
+    execute: async () => {
+      throw new Error('unused');
+    },
+  };
+  const runner = new AgentRunner(client, registry, {
+    model: 'agent-model',
+    maxToolCalls: 10,
+  });
+
+  const result = await runner.run({
+    chatTelegramId: -100,
+    triggerMessageId: 123,
+    botUsername: 'groknul_bot',
+  });
+
+  assert.deepEqual(result.output.items, [
+    {
+      plainText: 'poll without enough options',
+      richHtml: undefined,
+      richMarkdown: undefined,
+      replyToMessageId: undefined,
+      attachments: undefined,
+      poll: undefined,
+      delayHintMs: undefined,
+    },
+  ]);
+});

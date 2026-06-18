@@ -12,14 +12,21 @@ import { databaseConnection } from '../database/connection.js';
 import {
   MessageOriginUser,
   Message as TelegramMessage,
-  Poll as TelegramPoll,
 } from 'grammy/types';
 import { MessageReaction } from '../database/models/Message.js';
 import { API_CONSTANTS } from 'grammy';
 import { markdownToTelegramHtml } from '../utils/markdown-to-telegram-html.js';
-import { MESSAGE_TYPE, MessageType } from '../common/message-types.js';
-import type { Memory } from '../database/models/Memory.js';
-import type { Summary } from '../database/models/Summary.js';
+import { MESSAGE_TYPE } from '../common/message-types.js';
+import { getStartMessage } from '../common/start-message.js';
+import { AgentResponseService } from './agent-response.service.js';
+import { AiClient } from './ai-client.service.js';
+import { ContextToolService } from './context-tool.service.js';
+import { RawTelegramApiClient } from './raw-telegram-api-client.service.js';
+import { SearxngSearchService } from './searxng-search.service.js';
+import {
+  buildTelegramPollContext,
+  deriveTelegramMessageContent,
+} from './message-ingestion.service.js';
 
 interface SessionData {
   messageCount: number;
@@ -29,38 +36,29 @@ interface SessionData {
 
 type MyContext = HydrateFlavor<Context & { session: SessionData }>;
 
-export const getStartMessage = (botUsername: string) => `🤖 <b>Groknul Bot</b>
-
-I'm a bold, opinionated, yet helpful group chat assistant that observes conversations and provides informative responses!
-
-<b>How to use me:</b>
-• Add me to your group chat
-• Mention me (@${botUsername}) in a message or reply to my messages
-• I'll respond with contextual information based on recent group conversation
-
-<b>Features:</b>
-✨ Context-aware AI replies
-🧠 Long-term memory when you explicitly say “remember …”
-🧩 Hierarchical chat summaries for long-range context
-🖼️ Image understanding for photos/documents with concise context stored
-📝 Full message history with edit tracking
-🎭 Reactions tracking (emoji and custom emoji)
-🎯 Responds only when mentioned or when you reply to me
-🌐 Optional web access for fresh info (only when asked)
-💬 Matches your conversation style and language
-
-<b>Note:</b> I only work in group chats, not in private messages.
-
-Have fun chatting! 🚀`;
-
 export class TelegramBotService {
   private readonly bot: Bot<MyContext>;
-  private aiService: AiService;
+  private readonly aiClient: AiClient;
+  private readonly aiService: AiService;
+  private readonly contextToolService: ContextToolService;
+  private readonly agentResponseService: AgentResponseService;
   private botUsername: string = '';
 
   constructor() {
     this.bot = new Bot(config.telegram.apiKey);
-    this.aiService = new AiService();
+    this.aiClient = new AiClient();
+    this.aiService = new AiService(this.aiClient);
+    this.contextToolService = new ContextToolService(
+      database,
+      this.aiService,
+      config.agent.context,
+    );
+    this.agentResponseService = new AgentResponseService(
+      this.aiClient,
+      this.contextToolService,
+      new RawTelegramApiClient(config.telegram.apiKey),
+      new SearxngSearchService(config.searxng),
+    );
     this.setupMiddleware();
     this.setupHandlers();
   }
@@ -459,11 +457,11 @@ export class TelegramBotService {
     const messageModel = database.getMessageModel();
     const quote = message.quote;
 
-    const derived = this.deriveContentFields(message);
+    const derived = deriveTelegramMessageContent(message);
     // Build extra context for special message types (e.g., poll)
     let extraContext: string | undefined;
     if (message.poll) {
-      extraContext = this.buildPollContext(message.poll);
+      extraContext = buildTelegramPollContext(message.poll);
     }
 
     await messageModel.saveMessage({
@@ -594,7 +592,6 @@ export class TelegramBotService {
     }
 
     if (this.shouldRespond(message, ctx.from.id)) {
-      await ctx.replyWithChatAction('typing');
       await this.generateAndSendResponse(ctx, message);
       return;
     }
@@ -714,7 +711,7 @@ export class TelegramBotService {
       return false;
     }
 
-    const { text } = this.deriveContentFields(message);
+    const { text } = deriveTelegramMessageContent(message);
 
     if (text && text.includes(`@${this.botUsername}`)) {
       return true;
@@ -730,9 +727,9 @@ export class TelegramBotService {
     const cfg = config.telegram.ambient;
     if (!cfg.enabled) return false;
 
-    if ((message.from as any)?.id === this.bot.botInfo.id) return false;
+    if (message.from?.id === this.bot.botInfo.id) return false;
 
-    const { text, messageType } = this.deriveContentFields(message);
+    const { text, messageType } = deriveTelegramMessageContent(message);
     if (!text || messageType !== MESSAGE_TYPE.TEXT) return false;
 
     // Skip if directly mentions or replies to the bot (handled elsewhere)
@@ -852,88 +849,22 @@ export class TelegramBotService {
     const chatId = ctx.chat!.id;
 
     try {
-      const messageModel = database.getMessageModel();
-      const recentMessages = await messageModel.getRecentMessages(chatId, 200);
-
-      const dbTriggerMessage = await messageModel.findByMessageTelegramId(
-        triggerMessage.message_id,
-        chatId,
-      );
-
-      if (!dbTriggerMessage) {
-        logger.error('Trigger message not found in database');
-        return;
-      }
-
-      // Fetch memories and summaries separately
-      const { memories, summaries } =
-        await this.fetchMemoriesAndSummaries(chatId);
-
-      const aiResponse = await this.aiService.generateResponse(
-        recentMessages,
-        dbTriggerMessage,
-        this.botUsername,
-        memories,
-        summaries,
-      );
-
-      // If tools were used, emit a technical message
-      if (aiResponse.toolsUsed && aiResponse.toolsUsed.length > 0) {
-        try {
-          const toolNameList = aiResponse.toolsUsed
-            .map((n) => `'${n}'`)
-            .join(', ');
-          const techText = `🛠️ AI used ${toolNameList} tool`;
-          const techMsg = await ctx.reply(techText, {
-            reply_to_message_id: triggerMessage.message_id,
-          });
-          await messageModel.saveMessage({
-            telegramId: techMsg.message_id,
-            chatTelegramId: chatId,
-            userTelegramId: this.bot.botInfo.id,
-            text: techText,
-            replyToMessageTelegramId: triggerMessage.message_id,
-            sentAt: new Date(techMsg.date * 1000),
-            messageType: 'text',
-            payload: JSON.parse(JSON.stringify(techMsg)),
-          });
-        } catch (error) {
-          logger.error(
-            { error },
-            'Failed to send technical tool usage message',
-          );
-        }
-      }
-
-      const html = markdownToTelegramHtml(aiResponse.text);
-      const sentMessage = await ctx.reply(html, {
-        reply_to_message_id: triggerMessage.message_id,
-      });
-
-      await messageModel.saveMessage({
-        telegramId: sentMessage.message_id,
+      const derived = deriveTelegramMessageContent(triggerMessage);
+      const agentResult = await this.agentResponseService.generateAndSend({
+        api: ctx.api,
         chatTelegramId: chatId,
-        userTelegramId: this.bot.botInfo.id,
-        text: aiResponse.text,
-        replyToMessageTelegramId: triggerMessage.message_id,
-        sentAt: new Date(sentMessage.date * 1000),
-        messageType: 'text',
-        payload: JSON.parse(JSON.stringify(sentMessage)),
+        triggerMessageId: triggerMessage.message_id,
+        triggerText: derived.text,
+        botUsername: this.botUsername,
+        botUserTelegramId: this.bot.botInfo.id,
       });
-
-      // After persisting the bot message, ensure background summaries are up to date (non-blocking)
-      this.ensureSummaries(chatId).catch((error) =>
-        logger.error(
-          { error, chatId },
-          'Failed to maintain summaries after bot message',
-        ),
-      );
 
       logger.info(
         {
           chatId,
           triggerMessageId: triggerMessage.message_id,
-          botMessageId: sentMessage.message_id,
+          status: agentResult.status,
+          toolsUsed: agentResult.toolsUsed,
         },
         'AI response sent and saved successfully',
       );
@@ -963,139 +894,6 @@ export class TelegramBotService {
     }
   }
 
-  private async fetchMemoriesAndSummaries(
-    chatId: number,
-  ): Promise<{ memories: Memory[]; summaries: Summary[] }> {
-    const summaryModel = database.getSummaryModel();
-    const memoryModel = database.getMemoryModel();
-    const messageModel = database.getMessageModel();
-    const memories = await memoryModel.listByChat(chatId, 100);
-    const summaries: Summary[] = [];
-
-    // Summaries assembly
-
-    // Highest-level summaries first (very old), then lower levels, then level-0 ranges, then recent exact messages (added elsewhere)
-    // Find highest existing level
-    let probeLevel = 0;
-    while ((await summaryModel.getCount(chatId, probeLevel)) > 0) {
-      probeLevel += 1;
-    }
-    const maxLevel = probeLevel - 1;
-
-    for (let l = maxLevel; l >= 1; l--) {
-      const range = await summaryModel.getByLevelAscending(chatId, l);
-      for (const s of range) {
-        const title =
-          l === maxLevel
-            ? 'Very long time ago messages: SUMMARY of previous SUMMARIES'
-            : 'Older messages: SUMMARY of previous SUMMARIES';
-        summaries.push({ ...s, summary: `${title}\n${s.summary}` });
-      }
-    }
-
-    // Level 0: include a few recent blocks that are strictly before the last 200 exact messages
-    const totalMessages = await messageModel.countMessages(chatId);
-    const level0Summaries = await summaryModel.getByLevelAscending(chatId, 0);
-    const completedBlocks = level0Summaries.length; // completed summaries from oldest to newest
-    // Determine how many complete 200-message blocks exist strictly before the last 200 exact messages
-    const blocksBeforeExact = Math.max(
-      0,
-      Math.floor(Math.max(0, totalMessages - 200) / 200),
-    );
-    // Include ALL completed blocks strictly before the last 200 exact messages
-    const lastIncludedIdx = Math.min(
-      blocksBeforeExact - 1,
-      completedBlocks - 1,
-    );
-    // Indexing is oldest..newest; block 0 corresponds to 0-200 earliest.
-    // Include all level-0 summaries strictly before the last 200 exact messages,
-    // from oldest to newest so the AI reads chronology in order. Labels should
-    // count down towards the present, e.g. 5400-5200 ... 400-200.
-    const firstIncludedIdx = 0;
-    for (let b = firstIncludedIdx; b <= lastIncludedIdx; b++) {
-      const s = level0Summaries[b];
-      if (!s) continue;
-      const distanceFromEnd = lastIncludedIdx - b; // 0 = nearest to present
-      const lower = (distanceFromEnd + 1) * 200; // 200, 400, 600, ...
-      const upper = lower + 200; // 400, 600, 800, ...
-      summaries.push({
-        ...s,
-        summary: `${upper}-${lower} messages:\n${s.summary}`,
-      });
-    }
-
-    return { memories, summaries };
-  }
-
-  private getMessageType(message: TelegramMessage): MessageType {
-    if (message.text) return MESSAGE_TYPE.TEXT;
-    if (message.poll) return MESSAGE_TYPE.POLL;
-    if (message.photo) return MESSAGE_TYPE.PHOTO;
-    if (message.video) return MESSAGE_TYPE.VIDEO;
-    if (message.video_note) return MESSAGE_TYPE.VIDEO_NOTE;
-    if (message.document) return MESSAGE_TYPE.DOCUMENT;
-    if (message.sticker) return MESSAGE_TYPE.STICKER;
-    if (message.voice) return MESSAGE_TYPE.VOICE;
-    if (message.audio) return MESSAGE_TYPE.AUDIO;
-    return MESSAGE_TYPE.OTHER;
-  }
-
-  private deriveContentFields(message: TelegramMessage): {
-    text?: string;
-    fileName?: string;
-    messageType: MessageType;
-  } {
-    const messageType = this.getMessageType(message);
-    let text: string | undefined = message.text ?? undefined;
-    let fileName: string | undefined = undefined;
-
-    if (message.poll) {
-      text = message.poll.question ?? text;
-    }
-    if (message.photo) {
-      text = message.caption ?? text;
-    }
-    if (message.video) {
-      text = message.caption ?? text;
-      fileName = message.video.file_name ?? undefined;
-    }
-    if (message.document) {
-      text = message.caption ?? text;
-      fileName = message.document.file_name ?? undefined;
-    }
-    if (message.video_note) {
-      text = message.caption ?? text;
-    }
-
-    return { text, fileName, messageType };
-  }
-
-  private buildPollContext(poll: TelegramPoll): string {
-    const lines: string[] = [];
-    const options = (poll.options || []).map((o) => o.text);
-    lines.push('Poll details:');
-    lines.push(`• Question: ${poll.question}`);
-    lines.push(`• Options: ${options.join(' | ')}`);
-    lines.push(
-      `• Multiple answers: ${poll.allows_multiple_answers ? 'yes' : 'no'}`,
-    );
-    lines.push(`• Anonymous: ${poll.is_anonymous ? 'yes' : 'no'}`);
-    lines.push(`• Type: ${poll.type}`);
-    if (poll.correct_option_id !== undefined && poll.type === 'quiz') {
-      lines.push(`• Correct option index: ${poll.correct_option_id}`);
-    }
-    if (poll.explanation && poll.type === 'quiz') {
-      lines.push(`• Explanation: ${poll.explanation}`);
-    }
-    if (poll.open_period !== undefined) {
-      lines.push(`• Open period (sec): ${poll.open_period}`);
-    }
-    if (poll.close_date !== undefined) {
-      lines.push(`• Close date (unix): ${poll.close_date}`);
-    }
-    return lines.join('\n');
-  }
-
   async start(): Promise<void> {
     const botInfo = await this.bot.api.getMe();
     this.botUsername = botInfo.username || '';
@@ -1113,17 +911,6 @@ export class TelegramBotService {
 
     if (config.telegram.mode === 'webhook') {
       logger.info('Starting bot in webhook mode');
-
-      try {
-        await this.bot.api.setWebhook(config.telegram.webhookUrl!, {
-          allowed_updates: API_CONSTANTS.ALL_UPDATE_TYPES,
-          secret_token: config.telegram.webhookSecret,
-        });
-        logger.info('Webhook configured with reaction updates');
-      } catch (error) {
-        logger.error(error, 'Failed to configure webhook');
-      }
-
       return;
     } else {
       logger.info('Starting bot in polling mode');
@@ -1131,6 +918,14 @@ export class TelegramBotService {
       await this.bot.start({
         allowed_updates: API_CONSTANTS.ALL_UPDATE_TYPES,
       });
+    }
+  }
+
+  async stop(): Promise<void> {
+    logger.info('Stopping Telegram bot service');
+
+    if (config.telegram.mode === 'polling') {
+      this.bot.stop();
     }
   }
 
