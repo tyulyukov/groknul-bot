@@ -65,7 +65,7 @@ test('AgentRunner stops after 10 tool calls', async () => {
   assert.equal(result.output.items[0]?.plainText, 'I need a narrower request to continue safely.');
 });
 
-test('AgentRunner preserves model text when JSON has the wrong final shape', async () => {
+test('AgentRunner does not expose wrong-shape JSON as visible text', async () => {
   const client: AgentChatClient = {
     complete: async () => ({
       message: {
@@ -94,10 +94,43 @@ test('AgentRunner preserves model text when JSON has the wrong final shape', asy
   assert.equal(result.status, 'final');
   assert.deepEqual(result.output.items, [
     {
-      richMarkdown: '{"answer":"still useful"}',
-      plainText: '{"answer":"still useful"}',
+      plainText: 'я на секунду зламав форматування, але я тут',
     },
   ]);
+});
+
+test('AgentRunner passes configured reasoning effort to chat client', async () => {
+  let seenReasoningEffort: unknown;
+  const client: AgentChatClient = {
+    complete: async (input) => {
+      seenReasoningEffort = input.reasoningEffort;
+      return {
+        message: {
+          role: 'assistant',
+          content: 'ok',
+        },
+      };
+    },
+  };
+  const registry: AgentToolRegistry = {
+    getToolDefinitions: () => [],
+    execute: async () => {
+      throw new Error('unused');
+    },
+  };
+  const runner = new AgentRunner(client, registry, {
+    model: 'agent-model',
+    maxToolCalls: 10,
+    reasoningEffort: 'low',
+  });
+
+  await runner.run({
+    chatTelegramId: -100,
+    triggerMessageId: 123,
+    botUsername: 'groknul_bot',
+  });
+
+  assert.equal(seenReasoningEffort, 'low');
 });
 
 test('AgentRunner does not mark invalid send tool payloads as sent', async () => {
@@ -188,6 +221,46 @@ test('AgentRunner normalizes structured final output through the send payload sc
       plainText: 'poll without enough options',
       richHtml: undefined,
       richMarkdown: undefined,
+      replyToMessageId: undefined,
+      attachments: undefined,
+      poll: undefined,
+      delayHintMs: undefined,
+    },
+  ]);
+});
+
+test('AgentRunner normalizes fenced structured final output without exposing JSON', async () => {
+  const client: AgentChatClient = {
+    complete: async () => ({
+      message: {
+        role: 'assistant',
+        content:
+          '```json\n{"items":[{"plainText":"ні, JSON не показуємо","richMarkdown":"ні, JSON не показуємо"}]}\n```',
+      },
+    }),
+  };
+  const registry: AgentToolRegistry = {
+    getToolDefinitions: () => [],
+    execute: async () => {
+      throw new Error('unused');
+    },
+  };
+  const runner = new AgentRunner(client, registry, {
+    model: 'agent-model',
+    maxToolCalls: 10,
+  });
+
+  const result = await runner.run({
+    chatTelegramId: -100,
+    triggerMessageId: 123,
+    botUsername: 'groknul_bot',
+  });
+
+  assert.deepEqual(result.output.items, [
+    {
+      plainText: 'ні, JSON не показуємо',
+      richMarkdown: 'ні, JSON не показуємо',
+      richHtml: undefined,
       replyToMessageId: undefined,
       attachments: undefined,
       poll: undefined,

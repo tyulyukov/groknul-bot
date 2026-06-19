@@ -14,6 +14,7 @@ export interface CompleteChatInput {
   tools?: AgentToolDefinition[];
   temperature?: number;
   maxTokens?: number;
+  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 }
 
 interface AiClientRetryOptions {
@@ -59,13 +60,19 @@ export class AiClient implements AgentChatClient {
 
   async complete(input: CompleteChatInput): Promise<AgentChatCompletion> {
     const startedAt = Date.now();
-    const completion = await this.createChatCompletion({
+    const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
       model: input.model,
       messages: input.messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
       tools: input.tools as OpenAI.Chat.Completions.ChatCompletionTool[] | undefined,
       temperature: input.temperature,
       max_completion_tokens: input.maxTokens,
-    });
+    };
+    if (input.reasoningEffort) {
+      // @ts-expect-error OpenRouter pass-through for model reasoning controls
+      params.reasoning = { effort: input.reasoningEffort };
+    }
+
+    const completion = await this.createChatCompletion(params);
     const message = completion.choices[0]?.message;
 
     logger.info(

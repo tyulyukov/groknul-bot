@@ -93,3 +93,29 @@ test('AiClient does not retry non-retryable OpenRouter errors', async () => {
 
   assert.equal(calls, 1);
 });
+
+test('AiClient forwards reasoning effort to OpenRouter chat completions', async () => {
+  let seenParams:
+    | OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming
+    | undefined;
+  const openai = createOpenAiStub(async (params) => {
+    seenParams = params;
+    return completion('ok');
+  });
+  const client = new AiClient(openai, {
+    maxAttempts: 1,
+    baseDelayMs: 0,
+    maxDelayMs: 0,
+  });
+
+  await client.complete({
+    model: 'test-model',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'low',
+  });
+
+  assert.deepEqual(
+    (seenParams as Record<string, unknown> | undefined)?.reasoning,
+    { effort: 'low' },
+  );
+});

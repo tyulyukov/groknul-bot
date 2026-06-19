@@ -29,7 +29,7 @@ test('createConfig defaults OpenRouter and SearXNG agent settings', () => {
   const config = createConfig(requiredEnv);
 
   assert.equal(config.openRouter.models.reply, 'openai/gpt-5.5');
-  assert.equal(config.openRouter.models.agent, 'openai/gpt-5.4-mini');
+  assert.equal(config.openRouter.models.agent, 'openai/gpt-5.5');
   assert.equal(config.openRouter.models.summary, 'openai/gpt-5.4-mini');
   assert.equal(config.openRouter.models.vision, 'openai/gpt-5.4-mini');
   assert.equal(config.searxng.baseUrl, 'http://127.0.0.1:8080');

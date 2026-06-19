@@ -28,7 +28,7 @@ The name is inspired by Twitter/X’s Grok. "groknul" also playfully echoes the 
 - **Database**: MongoDB (messages, users, memories, summaries)
 - **AI (OpenRouter)**:
   - Reply: `openai/gpt-5.5`
-  - Agent/router: `openai/gpt-5.4-mini`
+  - Agent/router: `openai/gpt-5.5`
   - Summarization & Vision: `openai/gpt-5.4-mini`
   - Web search: self-hosted SearXNG
 - **Server**: Hono (Node) for webhook endpoints

@@ -76,6 +76,7 @@ export class AgentResponseService {
     const runner = new AgentRunner(this.aiClient, registry, {
       model: config.openRouter.models.agent,
       maxToolCalls: config.agent.maxToolCalls,
+      reasoningEffort: 'low',
     });
     const agentResult = await runner.run({
       chatTelegramId: input.chatTelegramId,

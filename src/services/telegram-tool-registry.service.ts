@@ -47,7 +47,7 @@ export class TelegramToolRegistry implements AgentToolRegistry {
 
   getToolDefinitions(): AgentToolDefinition[] {
     return [
-      this.tool('send', 'Send one or more rich Telegram message items.', {
+      this.tool('send', 'Send one or more user-visible Telegram message bubbles. Use this for normal replies when you want Poke-like pacing or multiple short bubbles. Put only natural chat text in richMarkdown/plainText; never put JSON, tool payloads, metadata, or {"items":...} text inside a message item.', {
         type: 'object',
         properties: {
           items: { type: 'array' },
