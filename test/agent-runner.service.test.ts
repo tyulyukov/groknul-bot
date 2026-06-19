@@ -341,6 +341,156 @@ test('AgentRunner continues after progress send when requested', async () => {
   assert.deepEqual(result.toolsUsed, ['send', 'web_search', 'send']);
 });
 
+test('AgentRunner stops after a reaction-only tool call', async () => {
+  let completions = 0;
+  const client: AgentChatClient = {
+    complete: async () => {
+      completions += 1;
+      return {
+        message: {
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call_react',
+              type: 'function',
+              function: {
+                name: 'react_to_message',
+                arguments: '{"messageId":123,"reaction":"😁"}',
+              },
+            },
+          ],
+        },
+      };
+    },
+  };
+  const registry: AgentToolRegistry = {
+    getToolDefinitions: () => [],
+    execute: async () => ({ status: 'ok', reacted: true }),
+  };
+  const runner = new AgentRunner(client, registry, {
+    model: 'agent-model',
+    maxToolCalls: 10,
+  });
+
+  const result = await runner.run({
+    chatTelegramId: -100,
+    triggerMessageId: 123,
+    botUsername: 'groknul_bot',
+  });
+
+  assert.equal(completions, 1);
+  assert.equal(result.status, 'reacted');
+  assert.deepEqual(result.toolsUsed, ['react_to_message']);
+});
+
+test('AgentRunner can react and then continue when requested', async () => {
+  let completions = 0;
+  const client: AgentChatClient = {
+    complete: async () => {
+      completions += 1;
+      if (completions === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            tool_calls: [
+              {
+                id: 'call_react',
+                type: 'function',
+                function: {
+                  name: 'react_to_message',
+                  arguments:
+                    '{"messageId":123,"reaction":"😁","continueAfter":true}',
+                },
+              },
+            ],
+          },
+        };
+      }
+
+      return {
+        message: {
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call_send',
+              type: 'function',
+              function: {
+                name: 'send',
+                arguments: '{"items":[{"plainText":"also, yes"}]}',
+              },
+            },
+          ],
+        },
+      };
+    },
+  };
+  const executedTools: string[] = [];
+  const registry: AgentToolRegistry = {
+    getToolDefinitions: () => [],
+    execute: async (name) => {
+      executedTools.push(name);
+      return name === 'send'
+        ? { status: 'ok', deliveries: [{ telegramId: 1 }] }
+        : { status: 'ok', reacted: true };
+    },
+  };
+  const runner = new AgentRunner(client, registry, {
+    model: 'agent-model',
+    maxToolCalls: 10,
+  });
+
+  const result = await runner.run({
+    chatTelegramId: -100,
+    triggerMessageId: 123,
+    botUsername: 'groknul_bot',
+  });
+
+  assert.equal(result.status, 'sent');
+  assert.deepEqual(executedTools, ['react_to_message', 'send']);
+});
+
+test('AgentRunner stops after an intentional ignore tool call', async () => {
+  let completions = 0;
+  const client: AgentChatClient = {
+    complete: async () => {
+      completions += 1;
+      return {
+        message: {
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call_ignore',
+              type: 'function',
+              function: {
+                name: 'ignore_message',
+                arguments: '{"reason":"just laughter after my joke"}',
+              },
+            },
+          ],
+        },
+      };
+    },
+  };
+  const registry: AgentToolRegistry = {
+    getToolDefinitions: () => [],
+    execute: async () => ({ status: 'ok', ignored: true }),
+  };
+  const runner = new AgentRunner(client, registry, {
+    model: 'agent-model',
+    maxToolCalls: 10,
+  });
+
+  const result = await runner.run({
+    chatTelegramId: -100,
+    triggerMessageId: 123,
+    botUsername: 'groknul_bot',
+  });
+
+  assert.equal(completions, 1);
+  assert.equal(result.status, 'ignored');
+  assert.deepEqual(result.toolsUsed, ['ignore_message']);
+});
+
 test('AgentRunner normalizes structured final output through the send payload schema', async () => {
   const client: AgentChatClient = {
     complete: async () => ({

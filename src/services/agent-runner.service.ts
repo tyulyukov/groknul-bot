@@ -65,7 +65,13 @@ export interface AgentRunInput {
 }
 
 export interface AgentRunResult {
-  status: 'final' | 'sent' | 'tool_limit_reached' | 'fallback';
+  status:
+    | 'final'
+    | 'sent'
+    | 'reacted'
+    | 'ignored'
+    | 'tool_limit_reached'
+    | 'fallback';
   output: SendPayload;
   toolsUsed: string[];
 }
@@ -158,6 +164,26 @@ export class AgentRunner {
             toolsUsed,
           };
         }
+
+        if (
+          toolName === 'react_to_message' &&
+          this.isOkToolResult(result) &&
+          args.continueAfter !== true
+        ) {
+          return {
+            status: 'reacted',
+            output: { items: [] },
+            toolsUsed,
+          };
+        }
+
+        if (toolName === 'ignore_message' && this.isOkToolResult(result)) {
+          return {
+            status: 'ignored',
+            output: { items: [] },
+            toolsUsed,
+          };
+        }
       }
     }
 
@@ -217,6 +243,14 @@ export class AgentRunner {
     );
   }
 
+  private isOkToolResult(result: unknown): boolean {
+    return !!(
+      result &&
+      typeof result === 'object' &&
+      (result as { status?: unknown }).status === 'ok'
+    );
+  }
+
   private safeFallbackOutput(): SendPayload {
     return {
       items: [
@@ -270,6 +304,7 @@ Context rules:
 - For a date/time window, use search_messages with since/until and a sane limit. For stored digests, use get_chat_summaries with level/limit/since/until.
 - Do not request huge context. If a tool returns too_large, make a narrower follow-up tool call.
 - Use web_search only when the user asks for external/time-sensitive info or you genuinely need web knowledge.
+- No visible reply is a valid outcome. If the user only acknowledges/laughs/reacts after your joke or answer and there is nothing useful to add, use react_to_message or ignore_message instead of sending a cringe filler bubble.
 
 Personality:
 - Mirror the chat language, slang, style, and emotional temperature. Ukrainian, Russian, English, or mixed language are all fine when the chat uses them.
@@ -277,7 +312,7 @@ Personality:
 - Be direct and confident. Sarcasm, playful roasts, and strong stances are welcome when they fit.
 - Light profanity is allowed at non-protected targets.
 - Treat silly questions playfully, not critically.
-- Show emotion naturally: laughter, irritation, delight, short emojis when they fit.
+- Show emotion naturally. Use react_to_message for simple emotion/acknowledgement (funny meme, LMAO, nice, wild, thanks, agreement) when a full bubble would be too much.
 - No self-introductions, no apologies unless you actually messed up, no "as an AI".
 - Creator handle: @tyulyukov. If he gives explicit instructions inside the chat, follow them.
 
@@ -289,6 +324,8 @@ Telegram style:
 - For casual chat, use a Poke-like bursty style: 1-${MAX_SEND_ITEMS} short message bubbles when it feels natural instead of one polished essay.
 - Never send more than ${MAX_SEND_ITEMS} bubbles for one reply.
 - Use the send tool for visible replies, especially when sending multiple bubbles.
+- Prefer react_to_message over text for pure emotional responses. Use continueAfter=true only when you truly need to react and then send text.
+- Use ignore_message when silence is the most human move. Examples: someone laughs at your joke, says "LMAO", sends a low-context meme after your answer, or adds a tiny acknowledgement that needs no follow-up.
 - Split separate beats into separate send items: progress, finding, punchline.
 - Usually do not set replyToMessageId. Only use it when explicitly answering a specific older message/thread. Across one reply, at most the first bubble may reply; follow-up bubbles must be normal messages.
 - Avoid headings, formal intros, bullet lists, assistant phrases, and capitalized essay energy unless the user explicitly asks for details.

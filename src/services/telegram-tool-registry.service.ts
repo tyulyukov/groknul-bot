@@ -9,6 +9,7 @@ import {
   type TelegramRichDeliveryService,
 } from './telegram-rich-delivery.service.js';
 import { markdownToTelegramHtml } from '../utils/markdown-to-telegram-html.js';
+import { MESSAGE_TYPE } from '../common/message-types.js';
 
 export interface TelegramActionApi {
     deleteMessage(chatId: number, messageId: number): Promise<unknown>;
@@ -41,6 +42,7 @@ interface TelegramToolRegistryInput {
     | 'replaceUserReactions'
     | 'editMessage'
     | 'markDeleted'
+    | 'saveMessage'
   >;
 }
 
@@ -160,13 +162,22 @@ export class TelegramToolRegistry implements AgentToolRegistry {
         },
         required: ['query'],
       }),
-      this.tool('react_to_message', 'React to a chat message.', {
+      this.tool('react_to_message', 'React to a chat message instead of sending a text bubble. Use this for pure emotion or lightweight acknowledgement: memes, LMAO, thanks, nice, wild, agreement, approval, or a tiny roast beat. By default this ends the agent reply; set continueAfter=true only when a visible follow-up message is genuinely needed.', {
         type: 'object',
         properties: {
           messageId: { type: 'number' },
           reaction: { type: 'string' },
+          continueAfter: { type: 'boolean' },
         },
         required: ['messageId', 'reaction'],
+      }),
+      this.tool('ignore_message', 'Deliberately send no visible reply and save an internal no-reply marker. Use when silence is the most human response, especially after laughter/acknowledgement/reaction bait where another bot bubble would be cringe.', {
+        type: 'object',
+        properties: {
+          messageId: { type: 'number' },
+          reason: { type: 'string' },
+        },
+        required: ['messageId', 'reason'],
       }),
       this.tool('edit_own_message', 'Edit a message sent by this bot.', {
         type: 'object',
@@ -277,6 +288,8 @@ export class TelegramToolRegistry implements AgentToolRegistry {
         });
       case 'react_to_message':
         return this.reactToMessage(args);
+      case 'ignore_message':
+        return this.ignoreMessage(args);
       case 'edit_own_message':
         return this.editOwnMessage(args);
       case 'delete_own_message':
@@ -321,7 +334,7 @@ export class TelegramToolRegistry implements AgentToolRegistry {
   private async reactToMessage(args: Record<string, unknown>): Promise<unknown> {
     const messageId = this.numberArg(args.messageId, 0);
     const reaction = this.stringArg(args.reaction) ?? '👍';
-    const result = await this.input.api.setMessageReaction(
+    await this.input.api.setMessageReaction(
       this.input.chatTelegramId,
       messageId,
       [{ type: 'emoji', emoji: reaction }],
@@ -334,7 +347,35 @@ export class TelegramToolRegistry implements AgentToolRegistry {
       [{ emoji: reaction }],
     );
 
-    return result;
+    return { status: 'ok', reacted: true, messageId, reaction };
+  }
+
+  private async ignoreMessage(args: Record<string, unknown>): Promise<unknown> {
+    const messageId = this.numberArg(args.messageId, 0);
+    if (messageId <= 0) {
+      return { status: 'invalid_args', reason: 'messageId_required' };
+    }
+
+    const rawReason = this.stringArg(args.reason) ?? 'no useful reply needed';
+    const reason = rawReason.trim().slice(0, 300) || 'no useful reply needed';
+
+    await this.input.messageModel.saveMessage({
+      telegramId: -Math.abs(messageId),
+      chatTelegramId: this.input.chatTelegramId,
+      userTelegramId: this.input.botUserTelegramId,
+      text: '',
+      context: `Bot deliberately did not send a visible reply. Reason: ${reason}`,
+      replyToMessageTelegramId: messageId,
+      sentAt: new Date(),
+      messageType: MESSAGE_TYPE.OTHER,
+      payload: {
+        type: 'agent_no_visible_reply',
+        messageId,
+        reason,
+      },
+    });
+
+    return { status: 'ok', ignored: true, messageId };
   }
 
   private async editOwnMessage(args: Record<string, unknown>): Promise<unknown> {

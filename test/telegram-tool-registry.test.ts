@@ -225,6 +225,50 @@ test('react_to_message replaces the bot reaction locally after Telegram succeeds
   ]);
 });
 
+test('ignore_message persists an internal no-reply marker', async () => {
+  let saved: Record<string, unknown> | undefined;
+  const registry = new TelegramToolRegistry({
+    chatTelegramId: -100,
+    botUserTelegramId: 999,
+    api: {
+      deleteMessage: async () => true,
+      editMessageText: async () => true,
+      setMessageReaction: async () => true,
+    },
+    delivery: {} as never,
+    contextTools: {} as never,
+    searchService: {} as never,
+    messageModel: {
+      findByMessageTelegramId: async () => null,
+      saveMessage: async (doc: Record<string, unknown>) => {
+        saved = doc;
+        return doc;
+      },
+    } as never,
+  });
+
+  const result = await registry.execute('ignore_message', {
+    messageId: 123,
+    reason: 'positive laughter after bot joke; reaction/reply would be too much',
+  });
+
+  assert.deepEqual(result, {
+    status: 'ok',
+    ignored: true,
+    messageId: 123,
+  });
+  assert.equal(saved?.telegramId, -123);
+  assert.equal(saved?.chatTelegramId, -100);
+  assert.equal(saved?.userTelegramId, 999);
+  assert.equal(saved?.text, '');
+  assert.equal(saved?.replyToMessageTelegramId, 123);
+  assert.equal(saved?.messageType, 'other');
+  assert.equal(
+    saved?.context,
+    'Bot deliberately did not send a visible reply. Reason: positive laughter after bot joke; reaction/reply would be too much',
+  );
+});
+
 test('edit_own_message updates the local message text after Telegram succeeds', async () => {
   let edited: unknown[] | undefined;
   const registry = new TelegramToolRegistry({

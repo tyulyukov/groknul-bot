@@ -28,7 +28,14 @@ export interface AgentResponseInput {
 }
 
 export interface AgentResponseResult {
-  status: 'sent' | 'final' | 'tool_limit_reached' | 'fallback' | 'skipped';
+  status:
+    | 'sent'
+    | 'final'
+    | 'reacted'
+    | 'ignored'
+    | 'tool_limit_reached'
+    | 'fallback'
+    | 'skipped';
   toolsUsed: string[];
 }
 
@@ -103,7 +110,11 @@ export class AgentResponseService {
       chatMemories,
     });
 
-    if (agentResult.status !== 'sent') {
+    if (
+      agentResult.status !== 'sent' &&
+      agentResult.status !== 'reacted' &&
+      agentResult.status !== 'ignored'
+    ) {
       await delivery.send(input.chatTelegramId, {
         items: agentResult.output.items.map((item, index) => ({
           ...item,
