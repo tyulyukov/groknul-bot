@@ -23,6 +23,9 @@ import { AiClient } from './ai-client.service.js';
 import { ContextToolService } from './context-tool.service.js';
 import { RawTelegramApiClient } from './raw-telegram-api-client.service.js';
 import { SearxngSearchService } from './searxng-search.service.js';
+import { CodexAiClient } from './codex-ai-client.service.js';
+import { CodexOAuthService } from './codex-oauth.service.js';
+import { CodexTelegramCommandService } from './codex-telegram-command.service.js';
 import {
   buildTelegramPollContext,
   deriveTelegramMessageContent,
@@ -40,13 +43,23 @@ export class TelegramBotService {
   private readonly bot: Bot<MyContext>;
   private readonly aiClient: AiClient;
   private readonly aiService: AiService;
+  private readonly codexOAuthService: CodexOAuthService;
+  private readonly codexCommandService: CodexTelegramCommandService;
   private readonly contextToolService: ContextToolService;
   private readonly agentResponseService: AgentResponseService;
   private botUsername: string = '';
 
   constructor() {
     this.bot = new Bot(config.telegram.apiKey);
-    this.aiClient = new AiClient();
+    this.codexOAuthService = new CodexOAuthService();
+    this.codexCommandService = new CodexTelegramCommandService(
+      this.codexOAuthService,
+    );
+    this.aiClient = new AiClient(
+      undefined,
+      {},
+      new CodexAiClient(this.codexOAuthService),
+    );
     this.aiService = new AiService(this.aiClient);
     this.contextToolService = new ContextToolService(
       database,
@@ -131,8 +144,16 @@ export class TelegramBotService {
         return;
       }
 
-      await ctx.reply(getStartMessage(this.botUsername));
+      const startMessage = [getStartMessage(this.botUsername)];
+      const codexStartMessage = this.codexCommandService.getStartMessage(ctx);
+      if (codexStartMessage) {
+        startMessage.push(codexStartMessage);
+      }
+
+      await ctx.reply(startMessage.join('\n'));
     });
+
+    this.codexCommandService.register(this.bot);
 
     // --- Admin-only commands (private chats only) ---
     this.bot.command('stats', async (ctx) => {

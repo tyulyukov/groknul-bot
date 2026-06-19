@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type OpenAI from 'openai';
 import { AiClient } from '../src/services/ai-client.service.js';
+import {
+  CodexAuthUnavailableError,
+  CodexProviderUnavailableError,
+} from '../src/services/codex-oauth.service.js';
 
 const completion = (
   content = 'ok',
@@ -118,4 +122,232 @@ test('AiClient forwards reasoning effort to OpenRouter chat completions', async 
     (seenParams as Record<string, unknown> | undefined)?.reasoning,
     { effort: 'low' },
   );
+});
+
+test('AiClient uses Codex first for OpenAI models', async () => {
+  let openRouterCalls = 0;
+  let codexCalls = 0;
+  const openai = createOpenAiStub(async () => {
+    openRouterCalls += 1;
+    return completion('openrouter');
+  });
+  const codex = {
+    canUseModel: (model: string) => model.startsWith('openai/'),
+    completeRaw: async () => {
+      codexCalls += 1;
+      return completion('codex');
+    },
+  };
+  const client = new AiClient(
+    openai,
+    { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    codex,
+  );
+
+  const result = await client.completeRaw({
+    model: 'openai/gpt-5.5',
+    messages: [{ role: 'user', content: 'hello' }],
+  });
+
+  assert.equal(result.choices[0]?.message.content, 'codex');
+  assert.equal(codexCalls, 1);
+  assert.equal(openRouterCalls, 0);
+});
+
+test('AiClient falls back to OpenRouter when Codex fails', async () => {
+  let openRouterCalls = 0;
+  let codexCalls = 0;
+  const openai = createOpenAiStub(async () => {
+    openRouterCalls += 1;
+    return completion('openrouter fallback');
+  });
+  const codex = {
+    canUseModel: (model: string) => model.startsWith('openai/'),
+    completeRaw: async () => {
+      codexCalls += 1;
+      const error = new Error('rate limited') as Error & { status: number };
+      error.status = 429;
+      throw error;
+    },
+  };
+  const client = new AiClient(
+    openai,
+    { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    codex,
+  );
+
+  const result = await client.completeRaw({
+    model: 'openai/gpt-5.5',
+    messages: [{ role: 'user', content: 'hello' }],
+  });
+
+  assert.equal(result.choices[0]?.message.content, 'openrouter fallback');
+  assert.equal(codexCalls, 1);
+  assert.equal(openRouterCalls, 1);
+});
+
+test('AiClient falls back to OpenRouter when Codex auth is not connected', async () => {
+  let openRouterCalls = 0;
+  const openai = createOpenAiStub(async () => {
+    openRouterCalls += 1;
+    return completion('openrouter fallback');
+  });
+  const codex = {
+    canUseModel: (model: string) => model.startsWith('openai/'),
+    completeRaw: async () => {
+      throw new CodexAuthUnavailableError('Codex OAuth is not connected');
+    },
+  };
+  const client = new AiClient(
+    openai,
+    { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    codex,
+  );
+
+  const result = await client.completeRaw({
+    model: 'openai/gpt-5.5',
+    messages: [{ role: 'user', content: 'hello' }],
+  });
+
+  assert.equal(result.choices[0]?.message.content, 'openrouter fallback');
+  assert.equal(openRouterCalls, 1);
+});
+
+test('AiClient falls back to OpenRouter when Codex refresh fails', async () => {
+  let openRouterCalls = 0;
+  const openai = createOpenAiStub(async () => {
+    openRouterCalls += 1;
+    return completion('openrouter fallback');
+  });
+  const codex = {
+    canUseModel: (model: string) => model.startsWith('openai/'),
+    completeRaw: async () => {
+      throw new CodexProviderUnavailableError('refresh failed', 500);
+    },
+  };
+  const client = new AiClient(
+    openai,
+    { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    codex,
+  );
+
+  const result = await client.completeRaw({
+    model: 'openai/gpt-5.5',
+    messages: [{ role: 'user', content: 'hello' }],
+  });
+
+  assert.equal(result.choices[0]?.message.content, 'openrouter fallback');
+  assert.equal(openRouterCalls, 1);
+});
+
+test('AiClient falls back to OpenRouter on Codex network TypeErrors', async () => {
+  let openRouterCalls = 0;
+  const openai = createOpenAiStub(async () => {
+    openRouterCalls += 1;
+    return completion('openrouter fallback');
+  });
+  const codex = {
+    canUseModel: (model: string) => model.startsWith('openai/'),
+    completeRaw: async () => {
+      throw new TypeError('fetch failed');
+    },
+  };
+  const client = new AiClient(
+    openai,
+    { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    codex,
+  );
+
+  const result = await client.completeRaw({
+    model: 'openai/gpt-5.5',
+    messages: [{ role: 'user', content: 'hello' }],
+  });
+
+  assert.equal(result.choices[0]?.message.content, 'openrouter fallback');
+  assert.equal(openRouterCalls, 1);
+});
+
+test('AiClient does not fall back to OpenRouter on Codex programmer TypeErrors', async () => {
+  let openRouterCalls = 0;
+  const openai = createOpenAiStub(async () => {
+    openRouterCalls += 1;
+    return completion('openrouter fallback');
+  });
+  const codex = {
+    canUseModel: (model: string) => model.startsWith('openai/'),
+    completeRaw: async () => {
+      throw new TypeError('Cannot read properties of undefined');
+    },
+  };
+  const client = new AiClient(
+    openai,
+    { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    codex,
+  );
+
+  await assert.rejects(
+    client.completeRaw({
+      model: 'openai/gpt-5.5',
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+    /Cannot read properties/,
+  );
+
+  assert.equal(openRouterCalls, 0);
+});
+
+test('AiClient does not fall back to OpenRouter on non-outage Codex errors', async () => {
+  let openRouterCalls = 0;
+  const openai = createOpenAiStub(async () => {
+    openRouterCalls += 1;
+    return completion('openrouter fallback');
+  });
+  const codex = {
+    canUseModel: (model: string) => model.startsWith('openai/'),
+    completeRaw: async () => {
+      const error = new Error('bad request') as Error & { status: number };
+      error.status = 400;
+      throw error;
+    },
+  };
+  const client = new AiClient(
+    openai,
+    { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    codex,
+  );
+
+  await assert.rejects(
+    client.completeRaw({
+      model: 'openai/gpt-5.5',
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+    /bad request/,
+  );
+
+  assert.equal(openRouterCalls, 0);
+});
+
+test('AiClient does not use Codex for non-OpenAI models', async () => {
+  let codexCalls = 0;
+  const openai = createOpenAiStub(async () => completion('openrouter'));
+  const codex = {
+    canUseModel: (model: string) => model.startsWith('openai/'),
+    completeRaw: async () => {
+      codexCalls += 1;
+      return completion('codex');
+    },
+  };
+  const client = new AiClient(
+    openai,
+    { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+    codex,
+  );
+
+  const result = await client.completeRaw({
+    model: 'anthropic/claude-test',
+    messages: [{ role: 'user', content: 'hello' }],
+  });
+
+  assert.equal(result.choices[0]?.message.content, 'openrouter');
+  assert.equal(codexCalls, 0);
 });

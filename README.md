@@ -30,6 +30,7 @@ The name is inspired by Twitter/X’s Grok. "groknul" also playfully echoes the 
   - Reply: `openai/gpt-5.5`
   - Agent/router: `openai/gpt-5.5`
   - Summarization & Vision: `openai/gpt-5.4-mini`
+  - Optional Codex OAuth first for `openai/...` models, with OpenRouter fallback
   - Web search: self-hosted SearXNG
 - **Server**: Hono (Node) for webhook endpoints
 - **Logging**: Pino
@@ -52,6 +53,12 @@ TELEGRAM_BOT_ADMIN_IDS=123456789,987654321               # comma-separated numer
 
 # OpenRouter AI Configuration
 OPENROUTER_API_KEY=sk_your_openrouter_api_key_here
+
+# Codex OAuth Configuration
+CODEX_OAUTH_AUTH_FILE=.data/codex-auth.json
+CODEX_OAUTH_ISSUER=https://auth.openai.com
+CODEX_OAUTH_CLIENT_ID=app_EMoamEEZ73f0CkXaXp7hrann
+CODEX_CHATGPT_BASE_URL=https://chatgpt.com/backend-api
 
 # MongoDB Configuration
 MONGODB_URI=mongodb://localhost:27017/groknul-bot-db
@@ -97,6 +104,11 @@ Admin‑only (run in private chat with the bot, users in `TELEGRAM_BOT_ADMIN_IDS
 - `/stats` — Show aggregate DB stats (total messages, chats, top chats)
 - `/say <chatId> <text>` — Send a message to a chat by Telegram chat ID
 - `/reply <dbMessageId> <text>` — Reply in a chat to a specific DB‑stored message
+
+Owner‑only Codex OAuth commands (private chat only, hard-gated to Telegram user `870452692`):
+- `/codex` or `/codex_status` — Show Codex OAuth connection status
+- `/codex_connect` — Start ChatGPT/Codex device-code login
+- `/codex_disconnect` — Remove stored Codex OAuth credentials
 
 ### Triggering Responses
 
