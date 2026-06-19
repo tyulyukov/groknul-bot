@@ -7,6 +7,12 @@ import type {
   AgentChatMessage,
   AgentToolDefinition,
 } from './agent-runner.service.js';
+import { CodexAiClient } from './codex-ai-client.service.js';
+import {
+  CodexAuthCancelledError,
+  CodexAuthUnavailableError,
+  CodexProviderUnavailableError,
+} from './codex-oauth.service.js';
 
 export interface CompleteChatInput {
   model: string;
@@ -15,6 +21,13 @@ export interface CompleteChatInput {
   temperature?: number;
   maxTokens?: number;
   reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+}
+
+interface CodexProviderClient {
+  canUseModel(model: string): boolean;
+  completeRaw(
+    params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
+  ): Promise<OpenAI.Chat.Completions.ChatCompletion>;
 }
 
 interface AiClientRetryOptions {
@@ -34,11 +47,13 @@ type RetryableErrorShape = {
 
 export class AiClient implements AgentChatClient {
   private readonly openai: OpenAI;
+  private readonly codexClient: CodexProviderClient;
   private readonly retryOptions: AiClientRetryOptions;
 
   constructor(
     openai?: OpenAI,
     retryOptions: Partial<AiClientRetryOptions> = {},
+    codexClient: CodexProviderClient = new CodexAiClient(),
   ) {
     this.openai =
       openai ??
@@ -51,6 +66,7 @@ export class AiClient implements AgentChatClient {
           'Accept-Encoding': 'identity',
         },
       });
+    this.codexClient = codexClient;
     this.retryOptions = {
       maxAttempts: retryOptions.maxAttempts ?? 3,
       baseDelayMs: retryOptions.baseDelayMs ?? 500,
@@ -72,12 +88,13 @@ export class AiClient implements AgentChatClient {
       params.reasoning = { effort: input.reasoningEffort };
     }
 
-    const completion = await this.createChatCompletion(params);
+    const { completion, provider } = await this.createChatCompletion(params);
     const message = completion.choices[0]?.message;
 
     logger.info(
       {
         model: input.model,
+        provider,
         durationMs: Date.now() - startedAt,
         promptMessages: input.messages.length,
         toolsCount: input.tools?.length ?? 0,
@@ -114,11 +131,12 @@ export class AiClient implements AgentChatClient {
     params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
   ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
     const startedAt = Date.now();
-    const completion = await this.createChatCompletion(params);
+    const { completion, provider } = await this.createChatCompletion(params);
 
     logger.info(
       {
         model: params.model,
+        provider,
         durationMs: Date.now() - startedAt,
         promptMessages: params.messages.length,
         finishReason: completion.choices[0]?.finish_reason,
@@ -136,6 +154,42 @@ export class AiClient implements AgentChatClient {
   }
 
   private async createChatCompletion(
+    params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
+  ): Promise<{
+    completion: OpenAI.Chat.Completions.ChatCompletion;
+    provider: 'codex' | 'openrouter';
+  }> {
+    if (this.codexClient.canUseModel(params.model)) {
+      try {
+        return {
+          completion: await this.codexClient.completeRaw(params),
+          provider: 'codex',
+        };
+      } catch (error) {
+        if (!this.shouldFallbackFromCodex(error)) {
+          throw error;
+        }
+
+        const log = error instanceof CodexAuthUnavailableError
+          ? logger.debug.bind(logger)
+          : logger.warn.bind(logger);
+        log(
+          {
+            model: params.model,
+            error: this.errorSummary(error),
+          },
+          'Codex completion unavailable; falling back to OpenRouter',
+        );
+      }
+    }
+
+    return {
+      completion: await this.createOpenRouterChatCompletion(params),
+      provider: 'openrouter',
+    };
+  }
+
+  private async createOpenRouterChatCompletion(
     params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
   ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
     let lastError: unknown;
@@ -231,5 +285,48 @@ export class AiClient implements AgentChatClient {
     return error && typeof error === 'object'
       ? (error as RetryableErrorShape)
       : {};
+  }
+
+  private shouldFallbackFromCodex(error: unknown): boolean {
+    if (error instanceof CodexAuthUnavailableError) return true;
+    if (error instanceof CodexAuthCancelledError) return true;
+    if (error instanceof CodexProviderUnavailableError) return true;
+
+    const status = this.statusCode(error);
+    if (status === 401 || status === 403) return true;
+    if (status === 429) return true;
+    if (typeof status === 'number' && status >= 500) return true;
+
+    return this.isNetworkTypeError(error);
+  }
+
+  private statusCode(error: unknown): number | undefined {
+    if (!error || typeof error !== 'object') return undefined;
+
+    const status = (error as { status?: unknown }).status;
+    if (typeof status === 'number') return status;
+
+    const statusCode = (error as { statusCode?: unknown }).statusCode;
+    return typeof statusCode === 'number' ? statusCode : undefined;
+  }
+
+  private isNetworkTypeError(error: unknown): boolean {
+    if (!(error instanceof TypeError)) return false;
+
+    const shapes = [
+      this.errorShape(error),
+      this.errorShape(this.errorShape(error).cause),
+    ];
+    return shapes.some((shape) => {
+      const message = typeof shape.message === 'string' ? shape.message : '';
+      const code = typeof shape.code === 'string' ? shape.code : '';
+      return (
+        message.includes('fetch failed') ||
+        message.includes('network') ||
+        code === 'ECONNRESET' ||
+        code === 'ETIMEDOUT' ||
+        code === 'EAI_AGAIN'
+      );
+    });
   }
 }

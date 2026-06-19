@@ -36,6 +36,14 @@ export interface Config {
       vision: string;
     };
   };
+  codex: {
+    ownerTelegramId: number;
+    authFilePath: string;
+    issuer: string;
+    clientId: string;
+    chatgptBaseUrl: string;
+    devicePollMaxMs: number;
+  };
   searxng: {
     baseUrl: string;
     timeoutMs: number;
@@ -163,6 +171,20 @@ export const createConfig = (env: EnvSource): Config => ({
       summary: env.OPENROUTER_SUMMARY_MODEL || 'openai/gpt-5.4-mini',
       vision: env.OPENROUTER_VISION_MODEL || 'openai/gpt-5.4-mini',
     },
+  },
+  codex: {
+    ownerTelegramId: 870_452_692,
+    authFilePath: env.CODEX_OAUTH_AUTH_FILE || '.data/codex-auth.json',
+    issuer: env.CODEX_OAUTH_ISSUER || 'https://auth.openai.com',
+    clientId:
+      env.CODEX_OAUTH_CLIENT_ID || 'app_EMoamEEZ73f0CkXaXp7hrann',
+    chatgptBaseUrl:
+      env.CODEX_CHATGPT_BASE_URL || 'https://chatgpt.com/backend-api',
+    devicePollMaxMs: parseInteger(
+      env,
+      'CODEX_OAUTH_DEVICE_POLL_MAX_MS',
+      15 * 60 * 1000,
+    ),
   },
   searxng: {
     baseUrl: env.SEARXNG_BASE_URL || 'http://127.0.0.1:8080',
