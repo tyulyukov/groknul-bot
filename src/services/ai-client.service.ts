@@ -16,10 +16,29 @@ export interface CompleteChatInput {
   maxTokens?: number;
 }
 
+interface AiClientRetryOptions {
+  maxAttempts: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+}
+
+type RetryableErrorShape = {
+  name?: unknown;
+  message?: unknown;
+  code?: unknown;
+  errno?: unknown;
+  status?: unknown;
+  cause?: unknown;
+};
+
 export class AiClient implements AgentChatClient {
   private readonly openai: OpenAI;
+  private readonly retryOptions: AiClientRetryOptions;
 
-  constructor(openai?: OpenAI) {
+  constructor(
+    openai?: OpenAI,
+    retryOptions: Partial<AiClientRetryOptions> = {},
+  ) {
     this.openai =
       openai ??
       new OpenAI({
@@ -30,11 +49,16 @@ export class AiClient implements AgentChatClient {
           'X-Title': 'groknul-bot',
         },
       });
+    this.retryOptions = {
+      maxAttempts: retryOptions.maxAttempts ?? 3,
+      baseDelayMs: retryOptions.baseDelayMs ?? 500,
+      maxDelayMs: retryOptions.maxDelayMs ?? 4000,
+    };
   }
 
   async complete(input: CompleteChatInput): Promise<AgentChatCompletion> {
     const startedAt = Date.now();
-    const completion = await this.openai.chat.completions.create({
+    const completion = await this.createChatCompletion({
       model: input.model,
       messages: input.messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
       tools: input.tools as OpenAI.Chat.Completions.ChatCompletionTool[] | undefined,
@@ -82,7 +106,7 @@ export class AiClient implements AgentChatClient {
     params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
   ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
     const startedAt = Date.now();
-    const completion = await this.openai.chat.completions.create(params);
+    const completion = await this.createChatCompletion(params);
 
     logger.info(
       {
@@ -101,5 +125,103 @@ export class AiClient implements AgentChatClient {
     );
 
     return completion;
+  }
+
+  private async createChatCompletion(
+    params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
+  ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= this.retryOptions.maxAttempts; attempt += 1) {
+      try {
+        return await this.openai.chat.completions.create(params);
+      } catch (error) {
+        lastError = error;
+
+        if (
+          attempt >= this.retryOptions.maxAttempts ||
+          !this.isRetryableOpenRouterError(error)
+        ) {
+          throw error;
+        }
+
+        const delayMs = this.calculateRetryDelayMs(attempt);
+        logger.warn(
+          {
+            model: params.model,
+            attempt,
+            maxAttempts: this.retryOptions.maxAttempts,
+            delayMs,
+            error: this.errorSummary(error),
+          },
+          'AI completion failed with retryable error; retrying',
+        );
+
+        if (delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+    }
+
+    throw lastError;
+  }
+
+  private calculateRetryDelayMs(attempt: number): number {
+    const exponentialDelay = this.retryOptions.baseDelayMs * 2 ** (attempt - 1);
+    const jitterMs = Math.floor(Math.random() * 100);
+    return Math.min(exponentialDelay + jitterMs, this.retryOptions.maxDelayMs);
+  }
+
+  private isRetryableOpenRouterError(error: unknown): boolean {
+    const current = this.errorShape(error);
+    const nested = this.errorShape(current.cause);
+    const shapes = [current, nested];
+
+    return shapes.some((shape) => {
+      const status = typeof shape.status === 'number' ? shape.status : undefined;
+      if (
+        status === 408 ||
+        status === 409 ||
+        status === 429 ||
+        (typeof status === 'number' && status >= 500)
+      ) {
+        return true;
+      }
+
+      const name = typeof shape.name === 'string' ? shape.name : '';
+      const code = typeof shape.code === 'string' ? shape.code : '';
+      const errno = typeof shape.errno === 'string' ? shape.errno : '';
+      const message = typeof shape.message === 'string' ? shape.message : '';
+
+      return (
+        name === 'APIConnectionError' ||
+        name === 'APIConnectionTimeoutError' ||
+        name === 'FetchError' ||
+        code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+        errno === 'ERR_STREAM_PREMATURE_CLOSE' ||
+        code === 'ECONNRESET' ||
+        code === 'ETIMEDOUT' ||
+        code === 'EAI_AGAIN' ||
+        message.includes('Premature close') ||
+        message.includes('Invalid response body')
+      );
+    });
+  }
+
+  private errorSummary(error: unknown): Record<string, unknown> {
+    const shape = this.errorShape(error);
+    return {
+      name: shape.name,
+      message: shape.message,
+      code: shape.code,
+      errno: shape.errno,
+      status: shape.status,
+    };
+  }
+
+  private errorShape(error: unknown): RetryableErrorShape {
+    return error && typeof error === 'object'
+      ? (error as RetryableErrorShape)
+      : {};
   }
 }
