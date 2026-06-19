@@ -22,6 +22,7 @@ interface CodexResponsesRequest {
   temperature?: number;
   top_p?: number;
   max_output_tokens?: number;
+  store: false;
   stream: true;
   include?: string[];
 }
@@ -235,6 +236,7 @@ export class CodexAiClient {
       model: this.stripOpenAiPrefix(params.model),
       instructions,
       input,
+      store: false,
       stream: true,
       include: ['reasoning.encrypted_content'],
     };

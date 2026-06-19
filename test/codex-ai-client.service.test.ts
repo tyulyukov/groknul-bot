@@ -102,10 +102,12 @@ test('CodexAiClient converts chat completion params to Codex Responses requests'
     }>;
     tools: Array<{ name: string; description: string; strict: boolean }>;
     max_output_tokens: number;
+    store: boolean;
     temperature: number;
     top_p: number;
   };
   assert.equal(body.model, 'gpt-5.5');
+  assert.equal(body.store, false);
   assert.equal(body.instructions, 'system rules');
   assert.deepEqual(body.input[0]?.content, [
     { type: 'input_text', text: 'what is in this image?' },
