@@ -134,6 +134,66 @@ test('send strips reply metadata from follow-up bubbles', async () => {
   });
 });
 
+test('send strips reply metadata after the first replied bubble across calls', async () => {
+  const sentPayloads: unknown[] = [];
+  const registry = new TelegramToolRegistry({
+    chatTelegramId: -100,
+    botUserTelegramId: 999,
+    api: {
+      deleteMessage: async () => true,
+      editMessageText: async () => true,
+      setMessageReaction: async () => true,
+    },
+    delivery: {
+      send: async (_chatId: number, payload: unknown) => {
+        sentPayloads.push(payload);
+        return { status: 'ok', deliveries: [{ telegramId: sentPayloads.length }] };
+      },
+    } as never,
+    contextTools: {} as never,
+    searchService: {} as never,
+    messageModel: {
+      findByMessageTelegramId: async () => null,
+    } as never,
+  });
+
+  await registry.execute('send', {
+    items: [{ plainText: 'progress', replyToMessageId: 123 }],
+  });
+  await registry.execute('send', {
+    items: [{ plainText: 'answer', replyToMessageId: 123 }],
+  });
+
+  assert.deepEqual(sentPayloads, [
+    {
+      items: [
+        {
+          plainText: 'progress',
+          richHtml: undefined,
+          richMarkdown: undefined,
+          replyToMessageId: 123,
+          attachments: undefined,
+          poll: undefined,
+          delayHintMs: undefined,
+        },
+      ],
+    },
+    {
+      items: [
+        {
+          plainText: 'answer',
+          richHtml: undefined,
+          richMarkdown: undefined,
+          replyToMessageId: undefined,
+          attachments: undefined,
+          poll: undefined,
+          delayHintMs: undefined,
+        },
+      ],
+    },
+  ]);
+});
+
 test('react_to_message replaces the bot reaction locally after Telegram succeeds', async () => {
   const replaceCalls: unknown[] = [];
   const registry = new TelegramToolRegistry({

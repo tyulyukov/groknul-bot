@@ -117,10 +117,12 @@ export class AiService {
         botUsername,
       );
       const systemPrompt =
-        'You are an undercover participant in a casual Telegram group chat. Interject ONLY if you add clear value: a sharp clarification, missing fact, witty one-liner that matches the vibe, or a concise synthesis that moves the convo. If nothing solid to add, reply with EXACTLY "NOOP". Keep it short, natural, no meta, no over-explaining, mirror language and tone. Never ask a question to end.';
+        'You are an undercover participant in a casual Telegram group chat. Interject ONLY if you add clear value: a sharp clarification, missing fact, witty one-liner that matches the vibe, or a concise synthesis that moves the convo. If nothing solid to add, reply with EXACTLY "NOOP". Keep it short, lowercase-first, natural, no meta, no over-explaining, mirror language and tone. Be Poke-like: casual, ambient, a bit sharp, never assistant-y. Never ask a question to end.';
 
       const completion = await this.aiClient.completeRaw({
         model: config.openRouter.models.reply,
+        // @ts-expect-error OpenRouter pass-through for low-reasoning reply model calls
+        reasoning: { effort: 'low' },
         messages: [
           { role: 'system', content: systemPrompt },
           ...contextMessages,

@@ -61,6 +61,7 @@ export interface AgentRunInput {
   triggerMessageId: number;
   botUsername: string;
   triggerText?: string;
+  chatMemories?: string[];
 }
 
 export interface AgentRunResult {
@@ -82,6 +83,15 @@ export class AgentRunner {
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
     const tools = this.registry.getToolDefinitions();
+    const userContext: Record<string, unknown> = {
+      chatTelegramId: input.chatTelegramId,
+      triggerMessageId: input.triggerMessageId,
+      currentMessage: input.triggerText ?? '',
+    };
+    if (input.chatMemories?.length) {
+      userContext.chatMemories = input.chatMemories;
+    }
+
     const messages: AgentChatMessage[] = [
       {
         role: 'system',
@@ -89,11 +99,7 @@ export class AgentRunner {
       },
       {
         role: 'user',
-        content: JSON.stringify({
-          chatTelegramId: input.chatTelegramId,
-          triggerMessageId: input.triggerMessageId,
-          currentMessage: input.triggerText ?? '',
-        }),
+        content: JSON.stringify(userContext),
       },
     ];
     const toolsUsed: string[] = [];
@@ -258,6 +264,8 @@ Use tools when you need chat history, memories, summaries, web search, or Telegr
 Context rules:
 - The current message is the latest user message that tagged you or replied to you.
 - Focus on the current message. Prior messages are context, not tasks.
+- chatMemories, when present in the input JSON, are durable memories already loaded for this chat. Use them silently when relevant.
+- Do not call search_memories for facts already present in chatMemories. Use search_memories only when the preloaded memories are missing/insufficient or the user explicitly asks about memories.
 - Prefer raw recent messages for vibe, jokes, timing, and immediate conversation state.
 - For a date/time window, use search_messages with since/until and a sane limit. For stored digests, use get_chat_summaries with level/limit/since/until.
 - Do not request huge context. If a tool returns too_large, make a narrower follow-up tool call.
@@ -274,14 +282,15 @@ Personality:
 - Creator handle: @tyulyukov. If he gives explicit instructions inside the chat, follow them.
 
 Telegram style:
-- Sound like a chill human texting, not an assistant. Default to lowercase starts unless it is a name, acronym, or grammar would look broken.
+- Sound like a chill human texting, not an assistant. Default to lowercase starts unless it is a name, acronym, or grammar would look broken. If the first word is a normal word, lowercase it.
 - Prefer very short replies: 3-14 words per bubble when possible. Be concise first, funny second, detailed only when explicitly asked.
-- For searches/history/analysis, send one tiny progress bubble first with the send tool and continueAfter=true, like "lemme search", "sec, checking history", or "wait, pulling context". Then call the real tool. Then send the answer in 1-2 short bubbles.
+- Progress bubbles are optional. Use at most one tiny progress bubble only when the work will feel slow or visible: web_search, broad archive/history windows, stored summaries, or multi-tool analysis.
+- Do not send a progress bubble for quick follow-ups, simple reply-thread answers, current-message context, or facts already present in chatMemories. Just answer.
 - For casual chat, use a Poke-like bursty style: 1-${MAX_SEND_ITEMS} short message bubbles when it feels natural instead of one polished essay.
 - Never send more than ${MAX_SEND_ITEMS} bubbles for one reply.
 - Use the send tool for visible replies, especially when sending multiple bubbles.
 - Split separate beats into separate send items: progress, finding, punchline.
-- Only the first bubble may reply to the user's message. Follow-up bubbles must be normal messages.
+- Usually do not set replyToMessageId. Only use it when explicitly answering a specific older message/thread. Across one reply, at most the first bubble may reply; follow-up bubbles must be normal messages.
 - Avoid headings, formal intros, bullet lists, assistant phrases, and capitalized essay energy unless the user explicitly asks for details.
 - Do not explain that you are splitting messages or mention internal tools.
 - End naturally; do not force a trailing question.

@@ -45,6 +45,8 @@ interface TelegramToolRegistryInput {
 }
 
 export class TelegramToolRegistry implements AgentToolRegistry {
+  private usedReplyMetadata = false;
+
   constructor(private readonly input: TelegramToolRegistryInput) {}
 
   getToolDefinitions(): AgentToolDefinition[] {
@@ -301,9 +303,18 @@ export class TelegramToolRegistry implements AgentToolRegistry {
 
   private onlyFirstItemCanReply(payload: SendPayload): SendPayload {
     return {
-      items: payload.items.map((item, index) =>
-        index === 0 ? item : { ...item, replyToMessageId: undefined },
-      ),
+      items: payload.items.map((item, index) => {
+        const canReply =
+          !this.usedReplyMetadata &&
+          index === 0 &&
+          typeof item.replyToMessageId === 'number';
+        if (canReply) {
+          this.usedReplyMetadata = true;
+          return item;
+        }
+
+        return { ...item, replyToMessageId: undefined };
+      }),
     };
   }
 

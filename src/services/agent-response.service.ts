@@ -3,7 +3,10 @@ import logger from '../common/logger.js';
 import { database } from '../database/index.js';
 import { AgentRunner } from './agent-runner.service.js';
 import type { AiClient } from './ai-client.service.js';
-import type { ContextToolService } from './context-tool.service.js';
+import type {
+  ContextToolResult,
+  ContextToolService,
+} from './context-tool.service.js';
 import type { RawTelegramApiClient } from './raw-telegram-api-client.service.js';
 import type { SearxngSearchService } from './searxng-search.service.js';
 import {
@@ -28,6 +31,19 @@ export interface AgentResponseResult {
   status: 'sent' | 'final' | 'tool_limit_reached' | 'fallback' | 'skipped';
   toolsUsed: string[];
 }
+
+export const extractMemoryTexts = (result: ContextToolResult): string[] => {
+  if (result.status !== 'ok' || !Array.isArray(result.memories)) return [];
+
+  return result.memories
+    .map((memory) => {
+      if (!memory || typeof memory !== 'object') return null;
+      const text = (memory as { text?: unknown }).text;
+      return typeof text === 'string' ? text.trim() : null;
+    })
+    .filter((text): text is string => !!text)
+    .map((text) => text.slice(0, 500));
+};
 
 export class AgentResponseService {
   constructor(
@@ -78,11 +94,13 @@ export class AgentResponseService {
       maxToolCalls: config.agent.maxToolCalls,
       reasoningEffort: 'low',
     });
+    const chatMemories = await this.loadChatMemories(input.chatTelegramId);
     const agentResult = await runner.run({
       chatTelegramId: input.chatTelegramId,
       triggerMessageId: input.triggerMessageId,
       botUsername: input.botUsername,
       triggerText: input.triggerText,
+      chatMemories,
     });
 
     if (agentResult.status !== 'sent') {
@@ -100,5 +118,25 @@ export class AgentResponseService {
       status: agentResult.status,
       toolsUsed: agentResult.toolsUsed,
     };
+  }
+
+  private async loadChatMemories(chatTelegramId: number): Promise<string[]> {
+    try {
+      const result = await this.contextToolService.searchMemories(
+        chatTelegramId,
+        {
+          limit: Math.min(12, config.agent.context.maxResults),
+        },
+      );
+      const memories = extractMemoryTexts(result);
+      logger.info(
+        { chatTelegramId, memoriesCount: memories.length },
+        'Loaded chat memories for agent context',
+      );
+      return memories;
+    } catch (error) {
+      logger.warn(error, 'Failed to preload chat memories for agent context');
+      return [];
+    }
   }
 }

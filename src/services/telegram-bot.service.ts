@@ -813,16 +813,14 @@ export class TelegramBotService {
     }
 
     const html = markdownToTelegramHtml(ambient);
-    const sent = await ctx.reply(html, {
-      reply_to_message_id: triggerMessage.message_id,
-    });
+    const sent = await ctx.api.sendMessage(chatId, html);
 
     await messageModel.saveMessage({
       telegramId: sent.message_id,
       chatTelegramId: chatId,
       userTelegramId: this.bot.botInfo.id,
       text: ambient,
-      replyToMessageTelegramId: triggerMessage.message_id,
+      replyToMessageTelegramId: undefined,
       sentAt: new Date(sent.date * 1000),
       messageType: 'text',
       payload: JSON.parse(JSON.stringify(sent)),
