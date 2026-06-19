@@ -3,6 +3,7 @@ import type { ContextToolService } from './context-tool.service.js';
 import type { MessageModel } from '../database/models/Message.js';
 import type { SearxngSearchService } from './searxng-search.service.js';
 import {
+  MAX_SEND_ITEMS,
   parseSendPayload,
   type TelegramRichDeliveryService,
 } from './telegram-rich-delivery.service.js';
@@ -47,12 +48,26 @@ export class TelegramToolRegistry implements AgentToolRegistry {
 
   getToolDefinitions(): AgentToolDefinition[] {
     return [
-      this.tool('send', 'Send one or more user-visible Telegram message bubbles. Use this for normal replies when you want Poke-like pacing or multiple short bubbles. Put only natural chat text in richMarkdown/plainText; never put JSON, tool payloads, metadata, or {"items":...} text inside a message item.', {
+      this.tool('send', `Send 1-${MAX_SEND_ITEMS} user-visible Telegram message bubbles. Keep each bubble short, natural, and Poke-like; use 1 bubble by default, 2 for a setup + result, and 3 only when the extra beat clearly helps. Put only natural chat text in richMarkdown/plainText; never put JSON, tool payloads, metadata, or {"items":...} text inside a message item.`, {
         type: 'object',
         properties: {
-          items: { type: 'array' },
+          items: {
+            type: 'array',
+            minItems: 1,
+            maxItems: MAX_SEND_ITEMS,
+            items: {
+              type: 'object',
+              properties: {
+                richMarkdown: { type: 'string' },
+                richHtml: { type: 'string' },
+                plainText: { type: 'string' },
+                replyToMessageId: { type: 'number' },
+                delayHintMs: { type: 'number' },
+              },
+              required: ['plainText'],
+            },
+          },
         },
-        minItems: 1,
         required: ['items'],
       }),
       this.tool('get_recent_messages', 'Fetch recent raw chat messages.', {

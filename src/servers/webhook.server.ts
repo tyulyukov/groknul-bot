@@ -37,6 +37,8 @@ export class WebhookServer {
     this.app.post(
       '/webhook',
       webhookCallback(this.telegramBotService.getBot(), 'hono', {
+        onTimeout: 'return',
+        timeoutMilliseconds: config.telegram.webhookTimeoutMs,
         secretToken: config.telegram.webhookSecret!,
       }),
     );

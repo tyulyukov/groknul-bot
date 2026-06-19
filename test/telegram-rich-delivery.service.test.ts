@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   calculateHumanDelayMs,
+  MAX_SEND_ITEMS,
+  parseSendPayload,
   TelegramRichDeliveryService,
 } from '../src/services/telegram-rich-delivery.service.js';
 
@@ -17,6 +19,20 @@ test('calculateHumanDelayMs is length aware and capped', () => {
       delayHintMs: 10_000,
     }),
     4_500,
+  );
+});
+
+test('parseSendPayload caps user-visible message bubbles', () => {
+  const payload = parseSendPayload({
+    items: Array.from({ length: MAX_SEND_ITEMS + 2 }, (_, index) => ({
+      plainText: `bubble ${index + 1}`,
+    })),
+  });
+
+  assert.equal(payload?.items.length, MAX_SEND_ITEMS);
+  assert.equal(
+    payload?.items[MAX_SEND_ITEMS - 1]?.plainText,
+    `bubble ${MAX_SEND_ITEMS}`,
   );
 });
 
@@ -149,4 +165,34 @@ test('send persists photo attachment as photo with attachment caption text', asy
     deliveryText: '<b>photo caption</b>',
     deliveryFallbackReason: undefined,
   });
+});
+
+test('send caps deliveries even when passed an oversized payload directly', async () => {
+  const sentTexts: string[] = [];
+  const service = new TelegramRichDeliveryService(
+    {
+      sendChatAction: async () => undefined,
+      sendMessage: async (_chatId: number, text: string) => {
+        sentTexts.push(text);
+        return {
+          message_id: 800 + sentTexts.length,
+          date: 1_778_800_002,
+          text,
+        };
+      },
+    },
+    { sendRichMessage: async () => ({ message_id: 1, date: 1 }) },
+    { saveMessage: async () => undefined },
+    999,
+    { random: () => 0, sleep: async () => undefined },
+  );
+
+  const result = await service.send(-100, {
+    items: Array.from({ length: MAX_SEND_ITEMS + 2 }, (_, index) => ({
+      plainText: `bubble ${index + 1}`,
+    })),
+  });
+
+  assert.equal(sentTexts.length, MAX_SEND_ITEMS);
+  assert.equal(result.deliveries.length, MAX_SEND_ITEMS);
 });

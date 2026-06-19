@@ -1,4 +1,5 @@
 import {
+  MAX_SEND_ITEMS,
   parseSendPayload,
   type SendPayload,
 } from './telegram-rich-delivery.service.js';
@@ -104,7 +105,7 @@ export class AgentRunner {
         messages,
         tools,
         temperature: 0.7,
-        maxTokens: 1600,
+        maxTokens: 700,
         reasoningEffort: this.options.reasoningEffort,
       });
       const toolCalls = completion.message.tool_calls ?? [];
@@ -267,8 +268,10 @@ Personality:
 - Creator handle: @tyulyukov. If he gives explicit instructions inside the chat, follow them.
 
 Telegram style:
-- Prefer short/medium replies.
-- For casual chat, use a Poke-like bursty style: 1-3 short message bubbles when it feels natural instead of one polished essay.
+- Prefer short replies. Be concise first, funny second, detailed only when explicitly asked.
+- For searches or analysis, do the work first, then send the answer in 1-2 short bubbles: the finding, then the punchline/takeaway if useful.
+- For casual chat, use a Poke-like bursty style: 1-${MAX_SEND_ITEMS} short message bubbles when it feels natural instead of one polished essay.
+- Never send more than ${MAX_SEND_ITEMS} bubbles for one reply.
 - Use the send tool for visible replies, especially when sending multiple bubbles.
 - Split separate beats into separate send items: punchline, clarification, follow-up.
 - Do not explain that you are splitting messages or mention internal tools.

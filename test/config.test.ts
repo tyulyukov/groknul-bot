@@ -34,5 +34,15 @@ test('createConfig defaults OpenRouter and SearXNG agent settings', () => {
   assert.equal(config.openRouter.models.vision, 'openai/gpt-5.4-mini');
   assert.equal(config.searxng.baseUrl, 'http://127.0.0.1:8080');
   assert.equal(config.searxng.maxResults, 5);
+  assert.equal(config.telegram.webhookTimeoutMs, 9_000);
   assert.equal(config.agent.maxToolCalls, 10);
+});
+
+test('createConfig allows overriding Telegram webhook timeout', () => {
+  const config = createConfig({
+    ...requiredEnv,
+    TELEGRAM_BOT_WEBHOOK_TIMEOUT_MS: '5000',
+  });
+
+  assert.equal(config.telegram.webhookTimeoutMs, 5_000);
 });

@@ -37,6 +37,8 @@ export interface SendPayload {
   items: SendItem[];
 }
 
+export const MAX_SEND_ITEMS = 3;
+
 export interface DeliveryResult {
   telegramId: number;
   format: DeliveryFormat;
@@ -78,6 +80,7 @@ export const parseSendPayload = (value: unknown): SendPayload | null => {
   if (!Array.isArray(items) || items.length === 0) return null;
 
   const parsedItems = items
+    .slice(0, MAX_SEND_ITEMS)
     .map(parseSendItem)
     .filter((item): item is SendItem => item !== null);
 
@@ -181,12 +184,14 @@ export class TelegramRichDeliveryService {
     payload: SendPayload,
   ): Promise<{ status: 'ok'; deliveries: DeliveryResult[] }> {
     const deliveries: DeliveryResult[] = [];
-    if (payload.items.length > 0) {
+    const items = payload.items.slice(0, MAX_SEND_ITEMS);
+
+    if (items.length > 0) {
       await this.api.sendChatAction?.(chatTelegramId, 'typing');
     }
 
-    for (let index = 0; index < payload.items.length; index += 1) {
-      const item = payload.items[index]!;
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index]!;
       if (index > 0) {
         await this.sleepForItem(item);
       }

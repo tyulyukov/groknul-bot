@@ -8,6 +8,7 @@ export interface Config {
     mode: 'webhook' | 'polling';
     webhookUrl?: string;
     webhookSecret?: string;
+    webhookTimeoutMs: number;
     serverHost: string;
     serverPort: number;
     adminIds: number[];
@@ -96,6 +97,7 @@ export const createConfig = (env: EnvSource): Config => ({
     mode: parseTelegramMode(env.TELEGRAM_BOT_MODE),
     webhookUrl: env.TELEGRAM_BOT_WEBHOOK_URL,
     webhookSecret: env.TELEGRAM_BOT_WEBHOOK_SECRET,
+    webhookTimeoutMs: parseInteger(env, 'TELEGRAM_BOT_WEBHOOK_TIMEOUT_MS', 9_000),
     serverHost: env.TELEGRAM_BOT_SERVER_HOST || '0.0.0.0',
     serverPort: parseInteger(env, 'TELEGRAM_BOT_SERVER_PORT', 3000),
     adminIds: (env.TELEGRAM_BOT_ADMIN_IDS || '')
