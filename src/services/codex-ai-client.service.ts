@@ -19,8 +19,6 @@ interface CodexResponsesRequest {
   reasoning?: {
     effort: string;
   };
-  temperature?: number;
-  top_p?: number;
   max_output_tokens?: number;
   store: false;
   stream: true;
@@ -248,13 +246,9 @@ export class CodexAiClient {
       request.parallel_tool_calls = true;
     }
 
-    if (typeof params.temperature === 'number') {
-      request.temperature = params.temperature;
-    }
-
-    if (typeof params.top_p === 'number') {
-      request.top_p = params.top_p;
-    }
+    // The ChatGPT /codex/responses backend rejects sampling parameters for
+    // gpt-5.x reasoning models ("Unsupported parameter: temperature", HTTP 400),
+    // so we accept temperature/top_p from callers but never forward them.
 
     const maxOutputTokens = this.numberField(params.max_completion_tokens);
     if (typeof maxOutputTokens === 'number') {

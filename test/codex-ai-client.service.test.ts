@@ -103,8 +103,8 @@ test('CodexAiClient converts chat completion params to Codex Responses requests'
     tools: Array<{ name: string; description: string; strict: boolean }>;
     max_output_tokens: number;
     store: boolean;
-    temperature: number;
-    top_p: number;
+    temperature?: number;
+    top_p?: number;
   };
   assert.equal(body.model, 'gpt-5.5');
   assert.equal(body.store, false);
@@ -116,8 +116,8 @@ test('CodexAiClient converts chat completion params to Codex Responses requests'
   assert.equal(body.tools[0]?.name, 'search');
   assert.equal(body.tools[0]?.description, 'Search the web');
   assert.equal(body.tools[0]?.strict, false);
-  assert.equal(body.temperature, 0.2);
-  assert.equal(body.top_p, 0.9);
+  assert.equal(body.temperature, undefined);
+  assert.equal(body.top_p, undefined);
   assert.equal(body.max_output_tokens, 100);
 
   assert.equal(result.id, 'resp_test');
