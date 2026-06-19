@@ -38,7 +38,6 @@ test('createConfig defaults OpenRouter and SearXNG agent settings', () => {
   assert.equal(config.openRouter.models.summary, 'openai/gpt-5.4-mini');
   assert.equal(config.openRouter.models.vision, 'openai/gpt-5.4-mini');
   assert.equal(config.codex.ownerTelegramId, 870_452_692);
-  assert.equal(config.codex.authFilePath, '.data/codex-auth.json');
   assert.equal(config.codex.issuer, 'https://auth.openai.com');
   assert.equal(config.codex.clientId, 'app_EMoamEEZ73f0CkXaXp7hrann');
   assert.equal(config.codex.chatgptBaseUrl, 'https://chatgpt.com/backend-api');
@@ -53,7 +52,6 @@ test('createConfig allows overriding Codex OAuth settings', () => {
   const config = createConfig({
     ...requiredEnv,
     CODEX_OAUTH_OWNER_TELEGRAM_ID: '42',
-    CODEX_OAUTH_AUTH_FILE: '/tmp/codex-auth.json',
     CODEX_OAUTH_ISSUER: 'https://auth.example.test',
     CODEX_OAUTH_CLIENT_ID: 'client-test',
     CODEX_CHATGPT_BASE_URL: 'https://chat.example.test/backend-api',
@@ -61,7 +59,6 @@ test('createConfig allows overriding Codex OAuth settings', () => {
   });
 
   assert.equal(config.codex.ownerTelegramId, 870_452_692);
-  assert.equal(config.codex.authFilePath, '/tmp/codex-auth.json');
   assert.equal(config.codex.issuer, 'https://auth.example.test');
   assert.equal(config.codex.clientId, 'client-test');
   assert.equal(config.codex.chatgptBaseUrl, 'https://chat.example.test/backend-api');

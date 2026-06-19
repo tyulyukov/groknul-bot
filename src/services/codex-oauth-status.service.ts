@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { config } from '../common/config.js';
+import { database } from '../database/index.js';
 
 type EnvSource = Record<string, string | undefined>;
 
@@ -12,8 +12,8 @@ export interface CodexOAuthStatusProvider {
 interface RuntimeCodexOAuthStatusProviderOptions {
   env?: EnvSource;
   homeDir?: string;
-  authFilePath?: string;
   readAuthFile?: (path: string) => string;
+  credentialSnapshot?: () => Record<string, unknown> | null;
 }
 
 export class RuntimeCodexOAuthStatusProvider
@@ -21,21 +21,22 @@ export class RuntimeCodexOAuthStatusProvider
 {
   private readonly env: EnvSource;
   private readonly homeDir: string;
-  private readonly authFilePath?: string;
   private readonly readAuthFile: (path: string) => string;
+  private readonly credentialSnapshot: () => Record<string, unknown> | null;
 
   constructor(options: RuntimeCodexOAuthStatusProviderOptions = {}) {
     this.env = options.env ?? process.env;
     this.homeDir = options.homeDir ?? homedir();
-    this.authFilePath =
-      options.authFilePath ??
-      (options.env ? undefined : config.codex.authFilePath);
     this.readAuthFile =
       options.readAuthFile ?? ((path) => readFileSync(path, 'utf8'));
+    this.credentialSnapshot =
+      options.credentialSnapshot ?? defaultCredentialSnapshot;
   }
 
   isAvailable(): boolean {
     if (hasNonEmptyString(this.env.CODEX_ACCESS_TOKEN)) return true;
+
+    if (hasCachedChatGptTokens(this.credentialSnapshot())) return true;
 
     for (const authFilePath of this.authFilePaths()) {
       try {
@@ -54,23 +55,25 @@ export class RuntimeCodexOAuthStatusProvider
     return false;
   }
 
+  // Fallback paths for an external Codex CLI install (not the bot's own
+  // credentials, which now live in MongoDB).
   private authFilePaths(): string[] {
     const explicitAuthFile =
-      this.env.CODEX_AUTH_FILE?.trim() ||
-      this.env.CODEX_AUTH_FILE_PATH?.trim() ||
-      this.env.CODEX_OAUTH_AUTH_FILE?.trim();
+      this.env.CODEX_AUTH_FILE?.trim() || this.env.CODEX_AUTH_FILE_PATH?.trim();
 
     const codexHome =
       this.env.CODEX_HOME?.trim() || join(this.homeDir, '.codex');
-    return [
-      explicitAuthFile,
-      this.authFilePath,
-      join(codexHome, 'auth.json'),
-    ].filter((path, index, paths): path is string => {
-      return !!path && paths.indexOf(path) === index;
-    });
+    return [explicitAuthFile, join(codexHome, 'auth.json')].filter(
+      (path, index, paths): path is string => {
+        return !!path && paths.indexOf(path) === index;
+      },
+    );
   }
 }
+
+const defaultCredentialSnapshot = (): Record<string, unknown> | null => {
+  return database.tryGetCodexAuthModel()?.getCached() ?? null;
+};
 
 const hasCachedChatGptTokens = (value: unknown): boolean => {
   if (!isRecord(value)) return false;

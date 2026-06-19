@@ -66,7 +66,7 @@ test('CodexTelegramCommandService only exposes status to the owner in private ch
       statusCalls += 1;
       return {
         connected: false,
-        authFilePath: '/tmp/codex-auth.json',
+        storage: 'MongoDB (codexauth)',
       };
     },
   } as unknown as CodexOAuthService;
@@ -156,7 +156,7 @@ test('CodexTelegramCommandService disconnect invalidates an in-flight login comp
 
         return {
           connected: true,
-          authFilePath: '/tmp/codex-auth.json',
+          storage: 'MongoDB (codexauth)',
           email: 'owner@example.test',
         };
       } finally {

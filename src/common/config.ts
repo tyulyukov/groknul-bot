@@ -40,7 +40,6 @@ export interface Config {
   };
   codex: {
     ownerTelegramId: number;
-    authFilePath: string;
     issuer: string;
     clientId: string;
     chatgptBaseUrl: string;
@@ -182,7 +181,6 @@ export const createConfig = (env: EnvSource): Config => ({
   },
   codex: {
     ownerTelegramId: 870_452_692,
-    authFilePath: env.CODEX_OAUTH_AUTH_FILE || '.data/codex-auth.json',
     issuer: env.CODEX_OAUTH_ISSUER || 'https://auth.openai.com',
     clientId:
       env.CODEX_OAUTH_CLIENT_ID || 'app_EMoamEEZ73f0CkXaXp7hrann',

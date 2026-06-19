@@ -1,6 +1,5 @@
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
 import { config } from '../common/config.js';
+import { database } from '../database/index.js';
 
 const TOKEN_REFRESH_INTERVAL_MS = 8 * 24 * 60 * 60 * 1000;
 const ACCESS_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
@@ -18,7 +17,7 @@ export interface CodexAuthStatus {
   accountId?: string;
   planType?: string;
   lastRefresh?: string;
-  authFilePath: string;
+  storage: string;
 }
 
 export interface CodexBearerAuth {
@@ -28,17 +27,50 @@ export interface CodexBearerAuth {
 }
 
 interface CodexOAuthOptions {
-  authFilePath: string;
   issuer: string;
   clientId: string;
   devicePollMaxMs: number;
 }
 
-interface CodexAuthFile {
+export interface CodexAuthFile {
   auth_mode?: string;
   OPENAI_API_KEY?: string | null;
   tokens?: CodexStoredTokens | null;
   last_refresh?: string | null;
+}
+
+/**
+ * Durable store for the Codex OAuth credential blob. Backed by MongoDB in
+ * production so credentials survive container redeploys; tests inject an
+ * in-memory implementation.
+ */
+export interface CodexCredentialStore {
+  read(): Promise<CodexAuthFile | null>;
+  write(auth: CodexAuthFile): Promise<void>;
+  clear(): Promise<boolean>;
+  describe(): string;
+}
+
+class DatabaseCodexCredentialStore implements CodexCredentialStore {
+  async read(): Promise<CodexAuthFile | null> {
+    const model = database.tryGetCodexAuthModel();
+    if (!model) return null;
+    return (await model.get()) as CodexAuthFile | null;
+  }
+
+  async write(auth: CodexAuthFile): Promise<void> {
+    await database
+      .getCodexAuthModel()
+      .save(auth as unknown as Record<string, unknown>);
+  }
+
+  async clear(): Promise<boolean> {
+    return database.getCodexAuthModel().delete();
+  }
+
+  describe(): string {
+    return 'MongoDB (codexauth)';
+  }
 }
 
 interface CodexStoredTokens {
@@ -106,33 +138,32 @@ export class CodexProviderUnavailableError extends Error {
 }
 
 export class CodexOAuthService {
-  private readonly authFilePath: string;
   private readonly issuer: string;
   private readonly clientId: string;
   private readonly devicePollMaxMs: number;
+  private readonly store: CodexCredentialStore;
   private authMutationGeneration = 0;
   private credentialMutationQueue: Promise<void> = Promise.resolve();
 
   constructor(
     options: Partial<CodexOAuthOptions> = {},
     private readonly fetchFn: typeof fetch = fetch,
+    store: CodexCredentialStore = new DatabaseCodexCredentialStore(),
   ) {
-    this.authFilePath = path.resolve(
-      options.authFilePath ?? config.codex.authFilePath,
-    );
     this.issuer = (options.issuer ?? config.codex.issuer).replace(/\/+$/, '');
     this.clientId = options.clientId ?? config.codex.clientId;
     this.devicePollMaxMs =
       options.devicePollMaxMs ?? config.codex.devicePollMaxMs;
+    this.store = store;
   }
 
   async getStatus(): Promise<CodexAuthStatus> {
-    const auth = await this.readAuthFile();
+    const auth = await this.readCredentials();
     const tokens = auth?.tokens;
     if (!tokens?.access_token || !tokens.refresh_token) {
       return {
         connected: false,
-        authFilePath: this.authFilePath,
+        storage: this.store.describe(),
       };
     }
 
@@ -150,7 +181,7 @@ export class CodexOAuthService {
         this.stringField(authClaims.chatgpt_account_id),
       planType: this.stringField(authClaims.chatgpt_plan_type),
       lastRefresh: auth?.last_refresh ?? undefined,
-      authFilePath: this.authFilePath,
+      storage: this.store.describe(),
     };
   }
 
@@ -158,13 +189,7 @@ export class CodexOAuthService {
     this.invalidateCredentialWrites();
 
     return this.queueCredentialMutation(async () => {
-      try {
-        await fs.unlink(this.authFilePath);
-        return true;
-      } catch (error) {
-        if (this.errorCode(error) === 'ENOENT') return false;
-        throw error;
-      }
+      return this.store.clear();
     });
   }
 
@@ -221,7 +246,7 @@ export class CodexOAuthService {
   }
 
   async getBearerAuth(): Promise<CodexBearerAuth> {
-    const auth = await this.readAuthFile();
+    const auth = await this.readCredentials();
     if (!auth?.tokens?.access_token || !auth.tokens.refresh_token) {
       throw new CodexAuthUnavailableError('Codex OAuth is not connected');
     }
@@ -249,7 +274,7 @@ export class CodexOAuthService {
   }
 
   async refreshAuthAfterUnauthorized(): Promise<void> {
-    const auth = await this.readAuthFile();
+    const auth = await this.readCredentials();
     if (!auth?.tokens?.refresh_token) {
       throw new CodexAuthUnavailableError('Codex OAuth refresh token is unavailable');
     }
@@ -400,23 +425,9 @@ export class CodexOAuthService {
     }, mutationGeneration);
   }
 
-  private async readAuthFile(): Promise<CodexAuthFile | null> {
-    try {
-      const raw = await fs.readFile(this.authFilePath, 'utf8');
-      return this.parseAuthFile(raw);
-    } catch (error) {
-      if (this.errorCode(error) === 'ENOENT') return null;
-      throw error;
-    }
-  }
-
-  private async writeAuthFile(auth: CodexAuthFile): Promise<void> {
-    await fs.mkdir(path.dirname(this.authFilePath), { recursive: true });
-    await fs.writeFile(this.authFilePath, JSON.stringify(auth, null, 2), {
-      encoding: 'utf8',
-      mode: 0o600,
-    });
-    await fs.chmod(this.authFilePath, 0o600);
+  private async readCredentials(): Promise<CodexAuthFile | null> {
+    const auth = await this.store.read();
+    return auth && typeof auth === 'object' ? auth : null;
   }
 
   private async writeCredentialAuthFile(
@@ -425,7 +436,7 @@ export class CodexOAuthService {
   ): Promise<void> {
     await this.queueCredentialMutation(async () => {
       this.assertCredentialWritesCurrent(mutationGeneration);
-      await this.writeAuthFile(auth);
+      await this.store.write(auth);
     });
   }
 
@@ -477,17 +488,6 @@ export class CodexOAuthService {
     }
 
     return (await response.json()) as T;
-  }
-
-  private parseAuthFile(raw: string): CodexAuthFile | null {
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      return parsed && typeof parsed === 'object'
-        ? (parsed as CodexAuthFile)
-        : null;
-    } catch {
-      return null;
-    }
   }
 
   private async parseTokenResponse(
@@ -610,12 +610,6 @@ export class CodexOAuthService {
 
   private booleanField(value: unknown): boolean | undefined {
     return typeof value === 'boolean' ? value : undefined;
-  }
-
-  private errorCode(error: unknown): string | undefined {
-    return error && typeof error === 'object'
-      ? (error as { code?: string }).code
-      : undefined;
   }
 
   private sleep(ms: number): Promise<void> {

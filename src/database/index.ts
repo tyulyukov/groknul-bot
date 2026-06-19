@@ -3,6 +3,7 @@ import { TelegramUser, TelegramUserModel } from './models/TelegramUser.js';
 import { Message, MessageModel } from './models/Message.js';
 import { Summary, SummaryModel } from './models/Summary.js';
 import { Memory, MemoryModel } from './models/Memory.js';
+import { CodexAuthDocument, CodexAuthModel } from './models/CodexAuth.js';
 import logger from '../common/logger.js';
 
 export class Database {
@@ -10,6 +11,7 @@ export class Database {
   private messageModel: MessageModel | null = null;
   private summaryModel: SummaryModel | null = null;
   private memoryModel: MemoryModel | null = null;
+  private codexAuthModel: CodexAuthModel | null = null;
 
   async initialize(): Promise<void> {
     const db = await databaseConnection.connect();
@@ -19,13 +21,16 @@ export class Database {
     const messagesCollection = db.collection<Message>('messages');
     const summariesCollection = db.collection<Summary>('summaries');
     const memoriesCollection = db.collection<Memory>('memories');
+    const codexAuthCollection = db.collection<CodexAuthDocument>('codexauth');
 
     this.telegramUserModel = new TelegramUserModel(telegramUsersCollection);
     this.messageModel = new MessageModel(messagesCollection);
     this.summaryModel = new SummaryModel(summariesCollection);
     this.memoryModel = new MemoryModel(memoriesCollection);
+    this.codexAuthModel = new CodexAuthModel(codexAuthCollection);
 
     await this.createIndexes();
+    await this.hydrateCodexAuthCache();
 
     logger.info('Database models initialized successfully');
   }
@@ -38,10 +43,19 @@ export class Database {
       await this.messageModel!.createIndexes();
       await this.summaryModel!.createIndexes();
       await this.memoryModel!.createIndexes();
+      await this.codexAuthModel!.createIndexes();
 
       logger.info('Database indexes created successfully');
     } catch (error) {
       logger.error(error, 'Failed to create database indexes');
+    }
+  }
+
+  private async hydrateCodexAuthCache(): Promise<void> {
+    try {
+      await this.codexAuthModel!.get();
+    } catch (error) {
+      logger.error(error, 'Failed to hydrate Codex auth cache');
     }
   }
 
@@ -71,6 +85,17 @@ export class Database {
       throw new Error('Database not initialized. Call initialize() first.');
     }
     return this.memoryModel;
+  }
+
+  getCodexAuthModel(): CodexAuthModel {
+    if (!this.codexAuthModel) {
+      throw new Error('Database not initialized. Call initialize() first.');
+    }
+    return this.codexAuthModel;
+  }
+
+  tryGetCodexAuthModel(): CodexAuthModel | null {
+    return this.codexAuthModel;
   }
 
   async disconnect(): Promise<void> {

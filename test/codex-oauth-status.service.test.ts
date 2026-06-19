@@ -38,9 +38,9 @@ test('RuntimeCodexOAuthStatusProvider enables image generation with cached ChatG
   }
 });
 
-test('RuntimeCodexOAuthStatusProvider supports the bot Codex OAuth auth file path', async () => {
+test('RuntimeCodexOAuthStatusProvider supports an explicit external Codex auth file path', async () => {
   const codexHome = await mkdtemp(join(tmpdir(), 'codex-auth-'));
-  const authFilePath = join(codexHome, 'bot-codex-auth.json');
+  const authFilePath = join(codexHome, 'external-codex-auth.json');
   try {
     await writeFile(
       authFilePath,
@@ -53,7 +53,7 @@ test('RuntimeCodexOAuthStatusProvider supports the bot Codex OAuth auth file pat
     );
 
     const provider = new RuntimeCodexOAuthStatusProvider({
-      env: { CODEX_OAUTH_AUTH_FILE: authFilePath },
+      env: { CODEX_AUTH_FILE: authFilePath },
       homeDir: '/missing-home',
     });
 
@@ -85,10 +85,34 @@ test('RuntimeCodexOAuthStatusProvider rejects API-key-only Codex auth', async ()
   }
 });
 
+test('RuntimeCodexOAuthStatusProvider enables image generation with a Mongo credential snapshot', () => {
+  const provider = new RuntimeCodexOAuthStatusProvider({
+    env: {},
+    homeDir: '/missing-home',
+    credentialSnapshot: () => ({
+      auth_mode: 'chatgpt',
+      tokens: { access_token: 'cached-access-token' },
+    }),
+  });
+
+  assert.equal(provider.isAvailable(), true);
+});
+
+test('RuntimeCodexOAuthStatusProvider ignores an empty Mongo credential snapshot', () => {
+  const provider = new RuntimeCodexOAuthStatusProvider({
+    env: { CODEX_HOME: '/missing-codex-home' },
+    homeDir: '/missing-home',
+    credentialSnapshot: () => null,
+  });
+
+  assert.equal(provider.isAvailable(), false);
+});
+
 test('RuntimeCodexOAuthStatusProvider disables image generation when auth is missing', () => {
   const provider = new RuntimeCodexOAuthStatusProvider({
     env: { CODEX_HOME: '/missing-codex-home' },
     homeDir: '/missing-home',
+    credentialSnapshot: () => null,
   });
 
   assert.equal(provider.isAvailable(), false);

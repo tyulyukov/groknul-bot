@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
-import { promises as fs } from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
 import {
   CodexAuthCancelledError,
   CodexProviderUnavailableError,
   CodexOAuthService,
+  type CodexAuthFile,
+  type CodexCredentialStore,
 } from '../src/services/codex-oauth.service.js';
 
 const jsonResponse = (body: unknown, status = 200): Response =>
@@ -22,22 +21,46 @@ const makeJwt = (claims: Record<string, unknown>): string => {
   return `${encode({ alg: 'none', typ: 'JWT' })}.${encode(claims)}.sig`;
 };
 
-const makeService = async (
+interface TestStore {
+  store: CodexCredentialStore;
+  current: () => CodexAuthFile | null;
+}
+
+const makeStore = (initial: CodexAuthFile | null = null): TestStore => {
+  let data: CodexAuthFile | null = initial;
+  return {
+    store: {
+      read: async () => data,
+      write: async (auth) => {
+        data = auth;
+      },
+      clear: async () => {
+        const had = data !== null;
+        data = null;
+        return had;
+      },
+      describe: () => 'in-memory',
+    },
+    current: () => data,
+  };
+};
+
+const makeService = (
   fetchFn: typeof fetch,
-): Promise<{ service: CodexOAuthService; authFilePath: string; tmpDir: string }> => {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-oauth-test-'));
-  const authFilePath = path.join(tmpDir, 'auth.json');
+  initial: CodexAuthFile | null = null,
+): { service: CodexOAuthService; store: TestStore } => {
+  const store = makeStore(initial);
   const service = new CodexOAuthService(
     {
-      authFilePath,
       issuer: 'https://auth.example.test',
       clientId: 'client-test',
       devicePollMaxMs: 1000,
     },
     fetchFn,
+    store.store,
   );
 
-  return { service, authFilePath, tmpDir };
+  return { service, store };
 };
 
 test('CodexOAuthService completes device-code login and stores auth status', async () => {
@@ -78,31 +101,26 @@ test('CodexOAuthService completes device-code login and stores auth status', asy
 
     return jsonResponse({ error: 'unexpected' }, 404);
   };
-  const { service, authFilePath, tmpDir } = await makeService(fetchFn);
+  const { service, store } = makeService(fetchFn);
 
-  try {
-    const deviceCode = await service.requestDeviceCode();
-    const status = await service.completeDeviceCodeLogin(deviceCode);
-    const saved = JSON.parse(await fs.readFile(authFilePath, 'utf8')) as {
-      tokens?: { access_token?: string; refresh_token?: string };
-    };
+  const deviceCode = await service.requestDeviceCode();
+  const status = await service.completeDeviceCodeLogin(deviceCode);
+  const saved = store.current();
 
-    assert.equal(deviceCode.verificationUrl, 'https://auth.example.test/codex/device');
-    assert.equal(deviceCode.userCode, 'CODE-123');
-    assert.equal(status.connected, true);
-    assert.equal(status.email, 'owner@example.test');
-    assert.equal(status.accountId, 'workspace-test');
-    assert.equal(status.planType, 'pro');
-    assert.equal(saved.tokens?.access_token, 'access-token-test');
-    assert.equal(saved.tokens?.refresh_token, 'refresh-token-test');
-    assert.deepEqual(calls, [
-      'https://auth.example.test/api/accounts/deviceauth/usercode',
-      'https://auth.example.test/api/accounts/deviceauth/token',
-      'https://auth.example.test/oauth/token',
-    ]);
-  } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true });
-  }
+  assert.equal(deviceCode.verificationUrl, 'https://auth.example.test/codex/device');
+  assert.equal(deviceCode.userCode, 'CODE-123');
+  assert.equal(status.connected, true);
+  assert.equal(status.email, 'owner@example.test');
+  assert.equal(status.accountId, 'workspace-test');
+  assert.equal(status.planType, 'pro');
+  assert.equal(status.storage, 'in-memory');
+  assert.equal(saved?.tokens?.access_token, 'access-token-test');
+  assert.equal(saved?.tokens?.refresh_token, 'refresh-token-test');
+  assert.deepEqual(calls, [
+    'https://auth.example.test/api/accounts/deviceauth/usercode',
+    'https://auth.example.test/api/accounts/deviceauth/token',
+    'https://auth.example.test/oauth/token',
+  ]);
 });
 
 test('CodexOAuthService refreshes expired access tokens before use', async () => {
@@ -128,37 +146,26 @@ test('CodexOAuthService refreshes expired access tokens before use', async () =>
 
     return jsonResponse({ error: 'unexpected' }, 404);
   };
-  const { service, authFilePath, tmpDir } = await makeService(fetchFn);
+  const { service, store } = makeService(fetchFn, {
+    auth_mode: 'chatgpt',
+    tokens: {
+      id_token: idToken,
+      access_token: expiredAccessToken,
+      refresh_token: 'refresh-token-old',
+      account_id: 'workspace-test',
+    },
+    last_refresh: new Date(0).toISOString(),
+  });
 
-  try {
-    await fs.writeFile(
-      authFilePath,
-      JSON.stringify({
-        auth_mode: 'chatgpt',
-        tokens: {
-          id_token: idToken,
-          access_token: expiredAccessToken,
-          refresh_token: 'refresh-token-old',
-          account_id: 'workspace-test',
-        },
-        last_refresh: new Date(0).toISOString(),
-      }),
-    );
+  const bearer = await service.getBearerAuth();
+  const saved = store.current();
 
-    const bearer = await service.getBearerAuth();
-    const saved = JSON.parse(await fs.readFile(authFilePath, 'utf8')) as {
-      tokens?: { access_token?: string; refresh_token?: string };
-    };
-
-    assert.equal(refreshCalls, 1);
-    assert.equal(bearer.accessToken, freshAccessToken);
-    assert.equal(bearer.accountId, 'workspace-test');
-    assert.equal(bearer.isFedrampAccount, true);
-    assert.equal(saved.tokens?.access_token, freshAccessToken);
-    assert.equal(saved.tokens?.refresh_token, 'refresh-token-fresh');
-  } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true });
-  }
+  assert.equal(refreshCalls, 1);
+  assert.equal(bearer.accessToken, freshAccessToken);
+  assert.equal(bearer.accountId, 'workspace-test');
+  assert.equal(bearer.isFedrampAccount, true);
+  assert.equal(saved?.tokens?.access_token, freshAccessToken);
+  assert.equal(saved?.tokens?.refresh_token, 'refresh-token-fresh');
 });
 
 test('CodexOAuthService cancels device-code login before credentials persist', async () => {
@@ -184,27 +191,23 @@ test('CodexOAuthService cancels device-code login before credentials persist', a
 
     return jsonResponse({ error: 'unexpected' }, 404);
   };
-  const { service, authFilePath, tmpDir } = await makeService(fetchFn);
+  const { service, store } = makeService(fetchFn);
 
-  try {
-    await assert.rejects(
-      service.completeDeviceCodeLogin(
-        {
-          verificationUrl: 'https://auth.example.test/codex/device',
-          userCode: 'CODE-123',
-          deviceAuthId: 'device-auth-test',
-          intervalSec: 1,
-        },
-        { shouldPersist: () => false },
-      ),
-      CodexAuthCancelledError,
-    );
+  await assert.rejects(
+    service.completeDeviceCodeLogin(
+      {
+        verificationUrl: 'https://auth.example.test/codex/device',
+        userCode: 'CODE-123',
+        deviceAuthId: 'device-auth-test',
+        intervalSec: 1,
+      },
+      { shouldPersist: () => false },
+    ),
+    CodexAuthCancelledError,
+  );
 
-    await assert.rejects(fs.stat(authFilePath), { code: 'ENOENT' });
-    assert.deepEqual(calls, []);
-  } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true });
-  }
+  assert.equal(store.current(), null);
+  assert.deepEqual(calls, []);
 });
 
 test('CodexOAuthService invalidates in-flight credential writes on disconnect', async () => {
@@ -230,24 +233,20 @@ test('CodexOAuthService invalidates in-flight credential writes on disconnect', 
 
     return jsonResponse({ error: 'unexpected' }, 404);
   };
-  const setup = await makeService(fetchFn);
+  const setup = makeService(fetchFn);
   service = setup.service;
 
-  try {
-    await assert.rejects(
-      service.completeDeviceCodeLogin({
-        verificationUrl: 'https://auth.example.test/codex/device',
-        userCode: 'CODE-123',
-        deviceAuthId: 'device-auth-test',
-        intervalSec: 1,
-      }),
-      CodexAuthCancelledError,
-    );
+  await assert.rejects(
+    service.completeDeviceCodeLogin({
+      verificationUrl: 'https://auth.example.test/codex/device',
+      userCode: 'CODE-123',
+      deviceAuthId: 'device-auth-test',
+      intervalSec: 1,
+    }),
+    CodexAuthCancelledError,
+  );
 
-    await assert.rejects(fs.stat(setup.authFilePath), { code: 'ENOENT' });
-  } finally {
-    await fs.rm(setup.tmpDir, { recursive: true, force: true });
-  }
+  assert.equal(setup.store.current(), null);
 });
 
 test('CodexOAuthService preserves refresh failure status for fallback policy', async () => {
@@ -261,78 +260,54 @@ test('CodexOAuthService preserves refresh failure status for fallback policy', a
 
     return jsonResponse({ error: 'unexpected' }, 404);
   };
-  const { service, authFilePath, tmpDir } = await makeService(fetchFn);
+  const { service } = makeService(fetchFn, {
+    auth_mode: 'chatgpt',
+    tokens: {
+      id_token: idToken,
+      access_token: expiredAccessToken,
+      refresh_token: 'refresh-token-old',
+    },
+    last_refresh: new Date(0).toISOString(),
+  });
 
-  try {
-    await fs.writeFile(
-      authFilePath,
-      JSON.stringify({
-        auth_mode: 'chatgpt',
-        tokens: {
-          id_token: idToken,
-          access_token: expiredAccessToken,
-          refresh_token: 'refresh-token-old',
-        },
-        last_refresh: new Date(0).toISOString(),
-      }),
-    );
-
-    await assert.rejects(
-      service.getBearerAuth(),
-      (error: unknown) =>
-        error instanceof CodexProviderUnavailableError && error.status === 500,
-    );
-  } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true });
-  }
+  await assert.rejects(
+    service.getBearerAuth(),
+    (error: unknown) =>
+      error instanceof CodexProviderUnavailableError && error.status === 500,
+  );
 });
 
-test('CodexOAuthService treats malformed auth files as disconnected', async () => {
+test('CodexOAuthService treats partial credential documents as disconnected', async () => {
   const fetchFn: typeof fetch = async () => jsonResponse({ error: 'unexpected' }, 404);
-  const { service, authFilePath, tmpDir } = await makeService(fetchFn);
+  const { service } = makeService(fetchFn, { auth_mode: 'chatgpt' });
 
-  try {
-    await fs.writeFile(authFilePath, '{not-json');
+  const status = await service.getStatus();
 
-    const status = await service.getStatus();
-
-    assert.equal(status.connected, false);
-    await assert.rejects(service.getBearerAuth(), /Codex OAuth is not connected/);
-  } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true });
-  }
+  assert.equal(status.connected, false);
+  await assert.rejects(service.getBearerAuth(), /Codex OAuth is not connected/);
 });
 
 test('CodexOAuthService handles malformed stored id token shape defensively', async () => {
   const accessToken = makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 });
   const fetchFn: typeof fetch = async () => jsonResponse({ error: 'unexpected' }, 404);
-  const { service, authFilePath, tmpDir } = await makeService(fetchFn);
+  const { service } = makeService(fetchFn, {
+    auth_mode: 'chatgpt',
+    tokens: {
+      id_token: null as unknown as string,
+      access_token: accessToken,
+      refresh_token: 'refresh-token-old',
+      account_id: 'workspace-test',
+    },
+    last_refresh: new Date().toISOString(),
+  });
 
-  try {
-    await fs.writeFile(
-      authFilePath,
-      JSON.stringify({
-        auth_mode: 'chatgpt',
-        tokens: {
-          id_token: null,
-          access_token: accessToken,
-          refresh_token: 'refresh-token-old',
-          account_id: 'workspace-test',
-        },
-        last_refresh: new Date().toISOString(),
-      }),
-    );
+  const status = await service.getStatus();
+  const bearer = await service.getBearerAuth();
 
-    const status = await service.getStatus();
-    const bearer = await service.getBearerAuth();
-
-    assert.equal(status.connected, true);
-    assert.equal(status.email, undefined);
-    assert.equal(bearer.accessToken, accessToken);
-    assert.equal(bearer.accountId, 'workspace-test');
-  } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true });
-  }
+  assert.equal(status.connected, true);
+  assert.equal(status.email, undefined);
+  assert.equal(bearer.accessToken, accessToken);
+  assert.equal(bearer.accountId, 'workspace-test');
 });
 
 test('CodexOAuthService rejects malformed refresh JSON with provider-unavailable error', async () => {
@@ -346,30 +321,21 @@ test('CodexOAuthService rejects malformed refresh JSON with provider-unavailable
 
     return jsonResponse({ error: 'unexpected' }, 404);
   };
-  const { service, authFilePath, tmpDir } = await makeService(fetchFn);
+  const { service } = makeService(fetchFn, {
+    auth_mode: 'chatgpt',
+    tokens: {
+      id_token: idToken,
+      access_token: expiredAccessToken,
+      refresh_token: 'refresh-token-old',
+    },
+    last_refresh: new Date(0).toISOString(),
+  });
 
-  try {
-    await fs.writeFile(
-      authFilePath,
-      JSON.stringify({
-        auth_mode: 'chatgpt',
-        tokens: {
-          id_token: idToken,
-          access_token: expiredAccessToken,
-          refresh_token: 'refresh-token-old',
-        },
-        last_refresh: new Date(0).toISOString(),
-      }),
-    );
-
-    await assert.rejects(
-      service.getBearerAuth(),
-      (error: unknown) =>
-        error instanceof CodexProviderUnavailableError && error.status === 200,
-    );
-  } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true });
-  }
+  await assert.rejects(
+    service.getBearerAuth(),
+    (error: unknown) =>
+      error instanceof CodexProviderUnavailableError && error.status === 200,
+  );
 });
 
 test('CodexOAuthService rejects refresh responses without a fresh access token', async () => {
@@ -386,28 +352,19 @@ test('CodexOAuthService rejects refresh responses without a fresh access token',
 
     return jsonResponse({ error: 'unexpected' }, 404);
   };
-  const { service, authFilePath, tmpDir } = await makeService(fetchFn);
+  const { service } = makeService(fetchFn, {
+    auth_mode: 'chatgpt',
+    tokens: {
+      id_token: idToken,
+      access_token: expiredAccessToken,
+      refresh_token: 'refresh-token-old',
+    },
+    last_refresh: new Date(0).toISOString(),
+  });
 
-  try {
-    await fs.writeFile(
-      authFilePath,
-      JSON.stringify({
-        auth_mode: 'chatgpt',
-        tokens: {
-          id_token: idToken,
-          access_token: expiredAccessToken,
-          refresh_token: 'refresh-token-old',
-        },
-        last_refresh: new Date(0).toISOString(),
-      }),
-    );
-
-    await assert.rejects(
-      service.getBearerAuth(),
-      (error: unknown) =>
-        error instanceof CodexProviderUnavailableError && error.status === 200,
-    );
-  } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true });
-  }
+  await assert.rejects(
+    service.getBearerAuth(),
+    (error: unknown) =>
+      error instanceof CodexProviderUnavailableError && error.status === 200,
+  );
 });

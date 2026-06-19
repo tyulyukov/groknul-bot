@@ -111,7 +111,7 @@ export class CodexTelegramCommandService {
         [
           '<b>Codex OAuth</b>',
           'Status: not connected',
-          `Auth file: <code>${this.escapeHtml(status.authFilePath)}</code>`,
+          `Storage: <code>${this.escapeHtml(status.storage)}</code>`,
           'Use /codex_connect to connect your ChatGPT/Codex subscription.',
         ].join('\n'),
       );

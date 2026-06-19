@@ -67,7 +67,8 @@ CODEX_ACCESS_TOKEN=your_codex_access_token_here              # optional
 CODEX_AUTH_FILE=/path/to/.codex/auth.json                    # optional, overrides ~/.codex/auth.json
 
 # Codex OAuth Configuration
-CODEX_OAUTH_AUTH_FILE=.data/codex-auth.json
+# Device-code login credentials are stored in MongoDB (collection: codexauth) so
+# they persist across container redeploys; there is no auth file to configure.
 CODEX_OAUTH_ISSUER=https://auth.openai.com
 CODEX_OAUTH_CLIENT_ID=app_EMoamEEZ73f0CkXaXp7hrann
 CODEX_CHATGPT_BASE_URL=https://chatgpt.com/backend-api
@@ -131,6 +132,8 @@ Owner‑only Codex OAuth commands (private chat only, hard-gated to Telegram use
 - `/codex` or `/codex_status` — Show Codex OAuth connection status
 - `/codex_connect` — Start ChatGPT/Codex device-code login
 - `/codex_disconnect` — Remove stored Codex OAuth credentials
+
+Credentials (including rotated refresh tokens) are stored in MongoDB, so a Codex login survives redeploys and you do not need to reconnect after each deploy.
 
 ### Triggering Responses
 
