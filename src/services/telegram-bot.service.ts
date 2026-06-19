@@ -696,8 +696,20 @@ export class TelegramBotService {
     }
   }
 
+  // A loop-capable peer is a genuine bot account posting as itself: replying to
+  // it could spark an infinite bot-to-bot loop (Bot API 10.0). Anonymous admins
+  // and channel senders carry `sender_chat` and are humans/channels behind the
+  // scenes, so they are allowed through.
+  private isLoopCapableBot(message: TelegramMessage): boolean {
+    return !!message.from?.is_bot && !message.sender_chat;
+  }
+
   private shouldRespond(message: TelegramMessage, fromUserId: number): boolean {
     if (fromUserId === this.bot.botInfo.id) {
+      return false;
+    }
+
+    if (this.isLoopCapableBot(message)) {
       return false;
     }
 
@@ -722,6 +734,8 @@ export class TelegramBotService {
     if (!cfg.enabled) return false;
 
     if (message.from?.id === this.bot.botInfo.id) return false;
+
+    if (this.isLoopCapableBot(message)) return false;
 
     const { text } = deriveTelegramMessageContent(message);
     const messageText = text ?? '';
