@@ -1,7 +1,10 @@
 import { config } from '../common/config.js';
 import logger from '../common/logger.js';
 import { database } from '../database/index.js';
-import { AgentRunner } from './agent-runner.service.js';
+import {
+  AgentRunner,
+  type AgentReplyContextMessage,
+} from './agent-runner.service.js';
 import type { AiClient } from './ai-client.service.js';
 import type {
   ContextToolResult,
@@ -50,6 +53,63 @@ export const extractMemoryTexts = (result: ContextToolResult): string[] => {
     })
     .filter((text): text is string => !!text)
     .map((text) => text.slice(0, 500));
+};
+
+export const extractReplyContextMessages = (
+  result: ContextToolResult,
+): AgentReplyContextMessage[] => {
+  if (result.status !== 'ok' || !Array.isArray(result.messages)) return [];
+
+  const messages = result.messages
+    .map((message) => {
+      if (!message || typeof message !== 'object') return null;
+      const raw = message as Record<string, unknown>;
+      const id = typeof raw.id === 'number' ? raw.id : undefined;
+      if (typeof id !== 'number') return null;
+
+      const normalized: AgentReplyContextMessage = { id };
+      const from = stringField(raw.from);
+      const userTelegramId = numberField(raw.userTelegramId);
+      const text = stringField(raw.text, 1_000);
+      const context = stringField(raw.context, 1_000);
+      const sentAt = dateField(raw.sentAt);
+      const replyToMessageId = numberField(raw.replyToMessageId);
+
+      if (from) normalized.from = from;
+      if (typeof userTelegramId === 'number') {
+        normalized.userTelegramId = userTelegramId;
+      }
+      if (text) normalized.text = text;
+      if (context) normalized.context = context;
+      if (sentAt) normalized.sentAt = sentAt;
+      if (typeof replyToMessageId === 'number') {
+        normalized.replyToMessageId = replyToMessageId;
+      }
+
+      return normalized;
+    })
+    .filter((message): message is AgentReplyContextMessage => message !== null);
+
+  return messages.length > 1 ? messages.slice(0, 5) : [];
+};
+
+const stringField = (value: unknown, maxLength = 200): string | undefined => {
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  return text ? text.slice(0, maxLength) : undefined;
+};
+
+const numberField = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+
+const dateField = (value: unknown): string | undefined => {
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value.toISOString();
+  }
+
+  if (typeof value !== 'string') return undefined;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
 };
 
 export class AgentResponseService {
@@ -102,12 +162,18 @@ export class AgentResponseService {
       reasoningEffort: 'low',
     });
     const chatMemories = await this.loadChatMemories(input.chatTelegramId);
+    const replyContext = await this.loadReplyContext(
+      input.chatTelegramId,
+      input.triggerMessageId,
+      dbTriggerMessage.replyToMessageTelegramId,
+    );
     const agentResult = await runner.run({
       chatTelegramId: input.chatTelegramId,
       triggerMessageId: input.triggerMessageId,
       botUsername: input.botUsername,
       triggerText: input.triggerText,
       chatMemories,
+      replyContext,
     });
 
     if (
@@ -147,6 +213,33 @@ export class AgentResponseService {
       return memories;
     } catch (error) {
       logger.warn(error, 'Failed to preload chat memories for agent context');
+      return [];
+    }
+  }
+
+  private async loadReplyContext(
+    chatTelegramId: number,
+    triggerMessageId: number,
+    replyToMessageId: number | undefined,
+  ): Promise<AgentReplyContextMessage[]> {
+    if (typeof replyToMessageId !== 'number') return [];
+
+    try {
+      const result = await this.contextToolService.getReplyThread(
+        chatTelegramId,
+        {
+          messageId: triggerMessageId,
+          limit: 5,
+        },
+      );
+      const replyContext = extractReplyContextMessages(result);
+      logger.info(
+        { chatTelegramId, triggerMessageId, replyContextCount: replyContext.length },
+        'Loaded reply context for agent context',
+      );
+      return replyContext;
+    } catch (error) {
+      logger.warn(error, 'Failed to preload reply context for agent context');
       return [];
     }
   }

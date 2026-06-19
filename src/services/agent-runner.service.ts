@@ -56,12 +56,23 @@ export interface AgentToolRegistry {
   execute(name: string, args: Record<string, unknown>): Promise<unknown>;
 }
 
+export interface AgentReplyContextMessage {
+  id: number;
+  from?: string;
+  userTelegramId?: number;
+  text?: string;
+  context?: string;
+  sentAt?: string;
+  replyToMessageId?: number;
+}
+
 export interface AgentRunInput {
   chatTelegramId: number;
   triggerMessageId: number;
   botUsername: string;
   triggerText?: string;
   chatMemories?: string[];
+  replyContext?: AgentReplyContextMessage[];
 }
 
 export interface AgentRunResult {
@@ -96,6 +107,9 @@ export class AgentRunner {
     };
     if (input.chatMemories?.length) {
       userContext.chatMemories = input.chatMemories;
+    }
+    if (input.replyContext?.length) {
+      userContext.replyContext = input.replyContext;
     }
 
     const messages: AgentChatMessage[] = [
@@ -299,11 +313,14 @@ Context rules:
 - The current message is the latest user message that tagged you or replied to you.
 - Focus on the current message. Prior messages are context, not tasks.
 - chatMemories, when present in the input JSON, are durable memories already loaded for this chat. Use them silently when relevant.
+- replyContext, when present in the input JSON, is the Telegram reply chain for the current message: item 0 is the current trigger, following items are the messages it replies to.
+- For short ambiguous commands like "news", "новости на стол", "что там", "дай инфу", "а это?", or pronouns like "он/это/там", resolve the topic from replyContext before answering or searching. Do not switch to unrelated general news.
 - Do not call search_memories for facts already present in chatMemories. Use search_memories only when the preloaded memories are missing/insufficient or the user explicitly asks about memories.
 - Prefer raw recent messages for vibe, jokes, timing, and immediate conversation state.
 - For a date/time window, use search_messages with since/until and a sane limit. For stored digests, use get_chat_summaries with level/limit/since/until.
 - Do not request huge context. If a tool returns too_large, make a narrower follow-up tool call.
 - Use web_search only when the user asks for external/time-sensitive info or you genuinely need web knowledge.
+- When using web_search for a short reply-based request, include the concrete entity/topic from replyContext in the query.
 - No visible reply is a valid outcome. If the user only acknowledges/laughs/reacts after your joke or answer and there is nothing useful to add, use react_to_message or ignore_message instead of sending a cringe filler bubble.
 
 Personality:

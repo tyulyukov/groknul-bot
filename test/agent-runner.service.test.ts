@@ -172,6 +172,77 @@ test('AgentRunner includes preloaded chat memories in model context', async () =
   ]);
 });
 
+test('AgentRunner includes reply context in model context', async () => {
+  let userPayload: Record<string, unknown> | undefined;
+  const client: AgentChatClient = {
+    complete: async (input) => {
+      userPayload = JSON.parse(String(input.messages[1]?.content));
+      return {
+        message: {
+          role: 'assistant',
+          content: 'ok',
+        },
+      };
+    },
+  };
+  const registry: AgentToolRegistry = {
+    getToolDefinitions: () => [],
+    execute: async () => {
+      throw new Error('unused');
+    },
+  };
+  const runner = new AgentRunner(client, registry, {
+    model: 'agent-model',
+    maxToolCalls: 10,
+  });
+
+  await runner.run({
+    chatTelegramId: -100,
+    triggerMessageId: 123,
+    botUsername: 'groknul_bot',
+    triggerText: '@groknul_bot новости на стол',
+    replyContext: [
+      {
+        id: 123,
+        from: 'maksym',
+        text: '@groknul_bot новости на стол',
+        replyToMessageId: 122,
+      },
+      {
+        id: 122,
+        from: 'maksym',
+        text: 'а это ты ебнул tay keith?',
+        replyToMessageId: 121,
+      },
+      {
+        id: 121,
+        from: 'sanyochek',
+        text: 'мне надо на треп хату там в корее',
+      },
+    ],
+  });
+
+  assert.deepEqual(userPayload?.replyContext, [
+    {
+      id: 123,
+      from: 'maksym',
+      text: '@groknul_bot новости на стол',
+      replyToMessageId: 122,
+    },
+    {
+      id: 122,
+      from: 'maksym',
+      text: 'а это ты ебнул tay keith?',
+      replyToMessageId: 121,
+    },
+    {
+      id: 121,
+      from: 'sanyochek',
+      text: 'мне надо на треп хату там в корее',
+    },
+  ]);
+});
+
 test('AgentRunner prompt makes progress bubbles conditional', async () => {
   let systemPrompt = '';
   const client: AgentChatClient = {
@@ -204,6 +275,8 @@ test('AgentRunner prompt makes progress bubbles conditional', async () => {
 
   assert.match(systemPrompt, /Progress bubbles are optional/);
   assert.match(systemPrompt, /Do not send a progress bubble for quick follow-ups/);
+  assert.match(systemPrompt, /replyContext/);
+  assert.match(systemPrompt, /short ambiguous commands/);
 });
 
 test('AgentRunner does not mark invalid send tool payloads as sent', async () => {
