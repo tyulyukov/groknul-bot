@@ -2,11 +2,94 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ContextToolService } from '../src/services/context-tool.service.js';
 
+test('getMessagesBefore returns messages immediately before a trigger', async () => {
+  let seenInput: unknown;
+  const service = new ContextToolService(
+    {
+      getMessageModel: () => ({
+        getRecentMessages: async () => [],
+        getMessagesBefore: async (...args: unknown[]) => {
+          seenInput = args;
+          return [
+            {
+              telegramId: 122,
+              chatTelegramId: -100,
+              userTelegramId: 777,
+              user: {
+                telegramId: 777,
+                username: 'maksym',
+                firstName: 'Maksym',
+                isBot: false,
+                history: [],
+                createdAt: new Date('2026-06-19T00:00:00.000Z'),
+                updatedAt: new Date('2026-06-19T00:00:00.000Z'),
+              },
+              text: 'а это ты ебнул tay keith?',
+              context: 'Image: screenshot context above the current message.',
+              sentAt: new Date('2026-06-19T09:32:00.000Z'),
+              edits: [],
+              reactions: [],
+              messageType: 'text',
+              payload: {},
+              createdAt: new Date('2026-06-19T09:32:00.000Z'),
+              updatedAt: new Date('2026-06-19T09:32:00.000Z'),
+            },
+          ];
+        },
+        searchMessages: async () => [],
+        findByMessageTelegramId: async () => null,
+        countMessages: async () => 0,
+      }),
+      getMemoryModel: () => ({
+        searchByChat: async () => [],
+        addMemory: async () => {
+          throw new Error('unused');
+        },
+        deleteById: async () => false,
+        listByChat: async () => [],
+      }),
+      getSummaryModel: () => ({
+        getByLevelAscending: async () => [],
+        getCount: async () => 0,
+      }),
+    },
+    {
+      summarizeText: async () => 'summary',
+    },
+    {
+      maxMessages: 50,
+      maxChars: 10_000,
+      maxResults: 20,
+    },
+  );
+
+  const result = await service.getMessagesBefore(-100, {
+    messageId: 123,
+    limit: 10,
+  });
+
+  assert.deepEqual(seenInput, [-100, 123, 10]);
+  assert.equal(result.status, 'ok');
+  assert.deepEqual(result.messages, [
+    {
+      id: 122,
+      from: 'maksym',
+      userTelegramId: 777,
+      text: 'а это ты ебнул tay keith?',
+      context: 'Image: screenshot context above the current message.',
+      sentAt: new Date('2026-06-19T09:32:00.000Z'),
+      replyToMessageId: undefined,
+      reactions: [],
+    },
+  ]);
+});
+
 test('getRecentMessages returns too_large when requested context exceeds hard caps', async () => {
   const service = new ContextToolService(
     {
       getMessageModel: () => ({
         getRecentMessages: async () => [],
+        getMessagesBefore: async () => [],
         searchMessages: async () => [],
         findByMessageTelegramId: async () => null,
         countMessages: async () => 0,
@@ -50,6 +133,7 @@ test('getChatDigest reads highest-level summaries before recent level-0 summarie
     {
       getMessageModel: () => ({
         getRecentMessages: async () => [],
+        getMessagesBefore: async () => [],
         searchMessages: async () => [],
         findByMessageTelegramId: async () => null,
         countMessages: async () => 0,
@@ -111,6 +195,7 @@ test('getChatSummaries returns the last matching stored summaries', async () => 
     {
       getMessageModel: () => ({
         getRecentMessages: async () => [],
+        getMessagesBefore: async () => [],
         searchMessages: async () => [],
         findByMessageTelegramId: async () => null,
         countMessages: async () => 0,
@@ -184,6 +269,7 @@ test('summarizeMessages can summarize a bounded message period', async () => {
         getRecentMessages: async () => {
           throw new Error('unused');
         },
+        getMessagesBefore: async () => [],
         searchMessages: async (input: unknown) => {
           searchInput = input;
           return [

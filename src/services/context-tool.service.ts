@@ -34,6 +34,7 @@ interface MinimalDatabase {
   getMessageModel(): Pick<
     MessageModel,
     | 'getRecentMessages'
+    | 'getMessagesBefore'
     | 'searchMessages'
     | 'findByMessageTelegramId'
     | 'countMessages'
@@ -83,6 +84,21 @@ export class ContextToolService {
         : messages;
 
     return this.messagesResult(filtered);
+  }
+
+  async getMessagesBefore(
+    chatTelegramId: number,
+    input: { messageId: number; limit?: number },
+  ): Promise<ContextToolResult> {
+    const limit = this.normalizeLimit(input.limit, 10);
+    const limitCheck = this.checkLimit(limit, { limit: this.limits.maxMessages });
+    if (limitCheck) return limitCheck;
+
+    const messages = await this.database
+      .getMessageModel()
+      .getMessagesBefore(chatTelegramId, input.messageId, limit);
+
+    return messages.length > 0 ? this.messagesResult(messages) : { status: 'not_found' };
   }
 
   async searchMessages(

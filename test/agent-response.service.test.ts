@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  extractCurrentMessageDetails,
   extractMemoryTexts,
   extractReplyContextMessages,
 } from '../src/services/agent-response.service.js';
@@ -94,4 +95,34 @@ test('extractReplyContextMessages omits non-reply threads', () => {
     }),
     [],
   );
+});
+
+test('extractCurrentMessageDetails preserves current message media context', () => {
+  const details = extractCurrentMessageDetails({
+    telegramId: 123,
+    userTelegramId: 777,
+    user: { username: 'maksym', firstName: 'Maksym' },
+    text: '@groknul_bot что там',
+    context: 'Image: screenshot of a Telegram chat about Tay Keith.',
+    fileName: 'photo.jpg',
+    messageType: 'photo',
+    sentAt: new Date('2026-06-19T09:33:00.000Z'),
+    replyToMessageTelegramId: 122,
+    replyQuoteText: 'а это ты ебнул tay keith?',
+    reactions: [{ emoji: '😁' }],
+  });
+
+  assert.deepEqual(details, {
+    id: 123,
+    from: 'maksym',
+    userTelegramId: 777,
+    text: '@groknul_bot что там',
+    context: 'Image: screenshot of a Telegram chat about Tay Keith.',
+    fileName: 'photo.jpg',
+    messageType: 'photo',
+    sentAt: '2026-06-19T09:33:00.000Z',
+    replyToMessageId: 122,
+    replyQuoteText: 'а это ты ебнул tay keith?',
+    reactions: ['😁'],
+  });
 });

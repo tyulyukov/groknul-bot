@@ -448,6 +448,24 @@ export class MessageModel {
       .toArray();
   }
 
+  async getMessagesBefore(
+    chatId: number,
+    messageTelegramId: number,
+    limit: number,
+  ): Promise<PopulatedMessage[]> {
+    const pipeline = this.buildPipeline(
+      {
+        chatTelegramId: chatId,
+        telegramId: { $lt: messageTelegramId },
+      },
+      { sort: { telegramId: -1 }, limit },
+    );
+
+    return await this.collection
+      .aggregate<PopulatedMessage>(pipeline)
+      .toArray();
+  }
+
   async searchMessages(input: {
     chatTelegramId: number;
     query?: string;

@@ -72,8 +72,12 @@ export const extractReplyContextMessages = (
       const userTelegramId = numberField(raw.userTelegramId);
       const text = stringField(raw.text, 1_000);
       const context = stringField(raw.context, 1_000);
+      const fileName = stringField(raw.fileName);
+      const messageType = stringField(raw.messageType);
       const sentAt = dateField(raw.sentAt);
       const replyToMessageId = numberField(raw.replyToMessageId);
+      const replyQuoteText = stringField(raw.replyQuoteText, 1_000);
+      const reactions = stringArrayField(raw.reactions);
 
       if (from) normalized.from = from;
       if (typeof userTelegramId === 'number') {
@@ -81,10 +85,14 @@ export const extractReplyContextMessages = (
       }
       if (text) normalized.text = text;
       if (context) normalized.context = context;
+      if (fileName) normalized.fileName = fileName;
+      if (messageType) normalized.messageType = messageType;
       if (sentAt) normalized.sentAt = sentAt;
       if (typeof replyToMessageId === 'number') {
         normalized.replyToMessageId = replyToMessageId;
       }
+      if (replyQuoteText) normalized.replyQuoteText = replyQuoteText;
+      if (reactions.length > 0) normalized.reactions = reactions;
 
       return normalized;
     })
@@ -93,11 +101,71 @@ export const extractReplyContextMessages = (
   return messages.length > 1 ? messages.slice(0, 5) : [];
 };
 
+export const extractCurrentMessageDetails = (
+  message: unknown,
+): AgentReplyContextMessage | undefined => {
+  if (!message || typeof message !== 'object') return undefined;
+  const raw = message as Record<string, unknown>;
+  const id = numberField(raw.telegramId);
+  if (typeof id !== 'number') return undefined;
+
+  const normalized: AgentReplyContextMessage = { id };
+  const user = raw.user && typeof raw.user === 'object'
+    ? (raw.user as Record<string, unknown>)
+    : undefined;
+  const from =
+    stringField(user?.username) ??
+    stringField(user?.firstName) ??
+    stringField(raw.from);
+  const userTelegramId = numberField(raw.userTelegramId);
+  const text = stringField(raw.text, 1_000);
+  const context = stringField(raw.context, 1_000);
+  const fileName = stringField(raw.fileName);
+  const messageType = stringField(raw.messageType);
+  const sentAt = dateField(raw.sentAt);
+  const replyToMessageId = numberField(raw.replyToMessageTelegramId);
+  const replyQuoteText = stringField(raw.replyQuoteText, 1_000);
+  const reactions = Array.isArray(raw.reactions)
+    ? raw.reactions
+        .map((reaction) => {
+          if (!reaction || typeof reaction !== 'object') return null;
+          const reactionRaw = reaction as Record<string, unknown>;
+          return (
+            stringField(reactionRaw.emoji) ??
+            stringField(reactionRaw.customEmojiId)
+          );
+        })
+        .filter((reaction): reaction is string => !!reaction)
+    : [];
+
+  if (from) normalized.from = from;
+  if (typeof userTelegramId === 'number') normalized.userTelegramId = userTelegramId;
+  if (text) normalized.text = text;
+  if (context) normalized.context = context;
+  if (fileName) normalized.fileName = fileName;
+  if (messageType) normalized.messageType = messageType;
+  if (sentAt) normalized.sentAt = sentAt;
+  if (typeof replyToMessageId === 'number') {
+    normalized.replyToMessageId = replyToMessageId;
+  }
+  if (replyQuoteText) normalized.replyQuoteText = replyQuoteText;
+  if (reactions.length > 0) normalized.reactions = reactions;
+
+  return normalized;
+};
+
 const stringField = (value: unknown, maxLength = 200): string | undefined => {
   if (typeof value !== 'string') return undefined;
   const text = value.trim();
   return text ? text.slice(0, maxLength) : undefined;
 };
+
+const stringArrayField = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value
+        .map((item) => stringField(item))
+        .filter((item): item is string => !!item)
+    : [];
 
 const numberField = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
@@ -174,6 +242,7 @@ export class AgentResponseService {
       triggerText: input.triggerText,
       chatMemories,
       replyContext,
+      currentMessageDetails: extractCurrentMessageDetails(dbTriggerMessage),
     });
 
     if (

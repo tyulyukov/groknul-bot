@@ -225,6 +225,38 @@ test('react_to_message replaces the bot reaction locally after Telegram succeeds
   ]);
 });
 
+test('get_messages_before proxies context lookup before a trigger message', async () => {
+  let seenArgs: unknown[] | undefined;
+  const registry = new TelegramToolRegistry({
+    chatTelegramId: -100,
+    botUserTelegramId: 999,
+    api: {
+      deleteMessage: async () => true,
+      editMessageText: async () => true,
+      setMessageReaction: async () => true,
+    },
+    delivery: {} as never,
+    contextTools: {
+      getMessagesBefore: async (...args: unknown[]) => {
+        seenArgs = args;
+        return { status: 'ok', messages: [] };
+      },
+    } as never,
+    searchService: {} as never,
+    messageModel: {
+      findByMessageTelegramId: async () => null,
+    } as never,
+  });
+
+  const result = await registry.execute('get_messages_before', {
+    messageId: 123,
+    limit: 10,
+  });
+
+  assert.deepEqual(seenArgs, [-100, { messageId: 123, limit: 10 }]);
+  assert.deepEqual(result, { status: 'ok', messages: [] });
+});
+
 test('ignore_message persists an internal no-reply marker', async () => {
   let saved: Record<string, unknown> | undefined;
   const registry = new TelegramToolRegistry({

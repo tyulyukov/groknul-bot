@@ -76,13 +76,21 @@ export class TelegramToolRegistry implements AgentToolRegistry {
         },
         required: ['items'],
       }),
-      this.tool('get_recent_messages', 'Fetch the last N raw chat messages, optionally only messages from the last sinceMinutes minutes. Use this for fresh context and vibe.', {
+      this.tool('get_recent_messages', 'Fetch the last N raw chat messages, optionally only messages from the last sinceMinutes minutes. Use this for fresh context and vibe when the exact anchor message does not matter.', {
         type: 'object',
         properties: {
           limit: { type: 'number' },
           sinceMinutes: { type: 'number' },
         },
         required: ['limit'],
+      }),
+      this.tool('get_messages_before', 'Fetch the N messages immediately above/before a specific Telegram message in this chat. Use this when the current request is vague, refers to "this/that/it/там/это", or seems to depend on nearby chat/photo context that was not in currentMessageDetails or replyContext. Ask for 5-10 first; increase only if needed.', {
+        type: 'object',
+        properties: {
+          messageId: { type: 'number' },
+          limit: { type: 'number' },
+        },
+        required: ['messageId'],
       }),
       this.tool('search_messages', 'Fetch persisted chat messages by optional text query, date range, author, and limit. Query is optional; use since/until with limit to fetch messages from a period of time.', {
         type: 'object',
@@ -205,6 +213,14 @@ export class TelegramToolRegistry implements AgentToolRegistry {
           {
             limit: this.numberArg(args.limit, 20),
             sinceMinutes: this.optionalNumberArg(args.sinceMinutes),
+          },
+        );
+      case 'get_messages_before':
+        return this.input.contextTools.getMessagesBefore(
+          this.input.chatTelegramId,
+          {
+            messageId: this.numberArg(args.messageId, 0),
+            limit: this.optionalNumberArg(args.limit),
           },
         );
       case 'search_messages':

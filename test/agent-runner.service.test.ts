@@ -243,6 +243,61 @@ test('AgentRunner includes reply context in model context', async () => {
   ]);
 });
 
+test('AgentRunner includes current message details in model context', async () => {
+  let userPayload: Record<string, unknown> | undefined;
+  const client: AgentChatClient = {
+    complete: async (input) => {
+      userPayload = JSON.parse(String(input.messages[1]?.content));
+      return {
+        message: {
+          role: 'assistant',
+          content: 'ok',
+        },
+      };
+    },
+  };
+  const registry: AgentToolRegistry = {
+    getToolDefinitions: () => [],
+    execute: async () => {
+      throw new Error('unused');
+    },
+  };
+  const runner = new AgentRunner(client, registry, {
+    model: 'agent-model',
+    maxToolCalls: 10,
+  });
+
+  await runner.run({
+    chatTelegramId: -100,
+    triggerMessageId: 123,
+    botUsername: 'groknul_bot',
+    triggerText: '@groknul_bot что там',
+    currentMessageDetails: {
+      id: 123,
+      from: 'maksym',
+      userTelegramId: 777,
+      text: '@groknul_bot что там',
+      context: 'Image: screenshot of a Telegram chat about Tay Keith.',
+      messageType: 'photo',
+      fileName: 'photo.jpg',
+      sentAt: '2026-06-19T09:33:00.000Z',
+      reactions: ['😁'],
+    },
+  });
+
+  assert.deepEqual(userPayload?.currentMessageDetails, {
+    id: 123,
+    from: 'maksym',
+    userTelegramId: 777,
+    text: '@groknul_bot что там',
+    context: 'Image: screenshot of a Telegram chat about Tay Keith.',
+    messageType: 'photo',
+    fileName: 'photo.jpg',
+    sentAt: '2026-06-19T09:33:00.000Z',
+    reactions: ['😁'],
+  });
+});
+
 test('AgentRunner prompt makes progress bubbles conditional', async () => {
   let systemPrompt = '';
   const client: AgentChatClient = {
@@ -277,6 +332,8 @@ test('AgentRunner prompt makes progress bubbles conditional', async () => {
   assert.match(systemPrompt, /Do not send a progress bubble for quick follow-ups/);
   assert.match(systemPrompt, /replyContext/);
   assert.match(systemPrompt, /short ambiguous commands/);
+  assert.match(systemPrompt, /get_messages_before/);
+  assert.match(systemPrompt, /currentMessageDetails/);
 });
 
 test('AgentRunner does not mark invalid send tool payloads as sent', async () => {

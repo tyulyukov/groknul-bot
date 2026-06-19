@@ -145,3 +145,21 @@ test('searchMessages escapes regex metacharacters in user query', async () => {
     },
   });
 });
+
+test('getMessagesBefore reads messages above the trigger by telegram id', async () => {
+  const collection = new FakeMessageCollection();
+  const model = new MessageModel(collection as never);
+
+  await model.getMessagesBefore(-100, 123, 10);
+
+  assert.deepEqual(collection.lastPipeline.slice(0, 2), [
+    {
+      $match: {
+        chatTelegramId: -100,
+        telegramId: { $lt: 123 },
+      },
+    },
+    { $sort: { telegramId: -1 } },
+  ]);
+  assert.deepEqual(collection.lastPipeline[2], { $limit: 10 });
+});
