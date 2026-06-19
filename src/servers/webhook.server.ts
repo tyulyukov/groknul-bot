@@ -99,15 +99,6 @@ export class WebhookServer {
   async stop(): Promise<void> {
     logger.info('Stopping webhook server');
 
-    if (config.telegram.mode === 'webhook') {
-      try {
-        await this.telegramBotService.getBot().api.deleteWebhook();
-        logger.info('Webhook removed');
-      } catch (error) {
-        logger.error(error, 'Failed to remove webhook');
-      }
-    }
-
     if (this.server) {
       await new Promise<void>((resolve, reject) => {
         this.server!.close((error) => {

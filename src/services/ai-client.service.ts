@@ -47,6 +47,7 @@ export class AiClient implements AgentChatClient {
         defaultHeaders: {
           'HTTP-Referer': 'https://tyulyukov.com',
           'X-Title': 'groknul-bot',
+          'Accept-Encoding': 'identity',
         },
       });
     this.retryOptions = {
