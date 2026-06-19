@@ -2,6 +2,85 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { TelegramToolRegistry } from '../src/services/telegram-tool-registry.service.js';
 
+const disabledImageService = {
+  generateImage: async () => null,
+};
+
+const disabledCodexOAuthStatus = {
+  isAvailable: () => false,
+};
+
+const enabledCodexOAuthStatus = {
+  isAvailable: () => true,
+};
+
+test('getToolDefinitions hides generate_image when Codex OAuth is unavailable', () => {
+  const registry = new TelegramToolRegistry({
+    chatTelegramId: -100,
+    botUserTelegramId: 999,
+    api: {
+      deleteMessage: async () => true,
+      editMessageText: async () => true,
+      setMessageReaction: async () => true,
+    },
+    delivery: {} as never,
+    imageService: disabledImageService,
+    codexOAuthStatus: disabledCodexOAuthStatus,
+    contextTools: {} as never,
+    searchService: {} as never,
+    messageModel: {
+      findByMessageTelegramId: async () => null,
+    } as never,
+  });
+
+  assert.equal(
+    registry
+      .getToolDefinitions()
+      .some((tool) => tool.function.name === 'generate_image'),
+    false,
+  );
+});
+
+test('generate_image is blocked at execution time when Codex OAuth is unavailable', async () => {
+  let generateCalls = 0;
+  const registry = new TelegramToolRegistry({
+    chatTelegramId: -100,
+    botUserTelegramId: 999,
+    api: {
+      deleteMessage: async () => true,
+      editMessageText: async () => true,
+      setMessageReaction: async () => true,
+    },
+    delivery: {
+      send: async () => {
+        throw new Error('unused');
+      },
+    } as never,
+    imageService: {
+      generateImage: async () => {
+        generateCalls += 1;
+        return { dataUrl: 'data:image/png;base64,aW1hZ2U=' };
+      },
+    },
+    codexOAuthStatus: disabledCodexOAuthStatus,
+    contextTools: {} as never,
+    searchService: {} as never,
+    messageModel: {
+      findByMessageTelegramId: async () => null,
+    } as never,
+  });
+
+  const result = await registry.execute('generate_image', {
+    prompt: 'please draw a cursed deployment graph',
+  });
+
+  assert.equal(generateCalls, 0);
+  assert.deepEqual(result, {
+    status: 'disabled',
+    reason: 'codex_oauth_required',
+  });
+});
+
 test('delete_own_message rejects messages not sent by this bot', async () => {
   let deleteCalled = false;
   const registry = new TelegramToolRegistry({
@@ -16,6 +95,7 @@ test('delete_own_message rejects messages not sent by this bot', async () => {
       setMessageReaction: async () => true,
     },
     delivery: {} as never,
+    imageService: disabledImageService,
     contextTools: {} as never,
     searchService: {} as never,
     messageModel: {
@@ -54,6 +134,7 @@ test('send rejects empty or malformed item arrays before delivery', async () => 
         return { status: 'ok', deliveries: [] };
       },
     } as never,
+    imageService: disabledImageService,
     contextTools: {} as never,
     searchService: {} as never,
     messageModel: {
@@ -86,6 +167,7 @@ test('send strips reply metadata from follow-up bubbles', async () => {
         return { status: 'ok', deliveries: [{ telegramId: 1 }] };
       },
     } as never,
+    imageService: disabledImageService,
     contextTools: {} as never,
     searchService: {} as never,
     messageModel: {
@@ -147,9 +229,13 @@ test('send strips reply metadata after the first replied bubble across calls', a
     delivery: {
       send: async (_chatId: number, payload: unknown) => {
         sentPayloads.push(payload);
-        return { status: 'ok', deliveries: [{ telegramId: sentPayloads.length }] };
+        return {
+          status: 'ok',
+          deliveries: [{ telegramId: sentPayloads.length }],
+        };
       },
     } as never,
+    imageService: disabledImageService,
     contextTools: {} as never,
     searchService: {} as never,
     messageModel: {
@@ -194,6 +280,69 @@ test('send strips reply metadata after the first replied bubble across calls', a
   ]);
 });
 
+test('generate_image generates and sends a Telegram photo attachment', async () => {
+  let generatedPrompt: string | undefined;
+  let sentPayload: unknown;
+  const registry = new TelegramToolRegistry({
+    chatTelegramId: -100,
+    botUserTelegramId: 999,
+    api: {
+      deleteMessage: async () => true,
+      editMessageText: async () => true,
+      setMessageReaction: async () => true,
+    },
+    delivery: {
+      send: async (_chatId: number, payload: unknown) => {
+        sentPayload = payload;
+        return {
+          status: 'ok',
+          deliveries: [{ telegramId: 456, format: 'photo' }],
+        };
+      },
+    } as never,
+    imageService: {
+      generateImage: async (input: { prompt: string }) => {
+        generatedPrompt = input.prompt;
+        return { dataUrl: 'data:image/png;base64,aW1hZ2U=' };
+      },
+    },
+    codexOAuthStatus: enabledCodexOAuthStatus,
+    contextTools: {} as never,
+    searchService: {} as never,
+    messageModel: {
+      findByMessageTelegramId: async () => null,
+    } as never,
+  });
+
+  const result = await registry.execute('generate_image', {
+    prompt: 'two tests in a trench coat trying to pass CI',
+    caption: 'ci saw the coat',
+    replyToMessageId: 123,
+    aspectRatio: '1:1',
+  });
+
+  assert.equal(generatedPrompt, 'two tests in a trench coat trying to pass CI');
+  assert.deepEqual(sentPayload, {
+    items: [
+      {
+        plainText: 'ci saw the coat',
+        replyToMessageId: 123,
+        attachments: [
+          {
+            type: 'photo',
+            fileIdOrUrl: 'data:image/png;base64,aW1hZ2U=',
+            captionPlainText: 'ci saw the coat',
+          },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(result, {
+    status: 'ok',
+    deliveries: [{ telegramId: 456, format: 'photo' }],
+  });
+});
+
 test('react_to_message replaces the bot reaction locally after Telegram succeeds', async () => {
   const replaceCalls: unknown[] = [];
   const registry = new TelegramToolRegistry({
@@ -205,6 +354,7 @@ test('react_to_message replaces the bot reaction locally after Telegram succeeds
       setMessageReaction: async () => true,
     },
     delivery: {} as never,
+    imageService: disabledImageService,
     contextTools: {} as never,
     searchService: {} as never,
     messageModel: {
@@ -220,9 +370,7 @@ test('react_to_message replaces the bot reaction locally after Telegram succeeds
     reaction: '🔥',
   });
 
-  assert.deepEqual(replaceCalls, [
-    [123, -100, 999, [{ emoji: '🔥' }]],
-  ]);
+  assert.deepEqual(replaceCalls, [[123, -100, 999, [{ emoji: '🔥' }]]]);
 });
 
 test('get_messages_before proxies context lookup before a trigger message', async () => {
@@ -236,6 +384,7 @@ test('get_messages_before proxies context lookup before a trigger message', asyn
       setMessageReaction: async () => true,
     },
     delivery: {} as never,
+    imageService: disabledImageService,
     contextTools: {
       getMessagesBefore: async (...args: unknown[]) => {
         seenArgs = args;
@@ -268,6 +417,7 @@ test('ignore_message persists an internal no-reply marker', async () => {
       setMessageReaction: async () => true,
     },
     delivery: {} as never,
+    imageService: disabledImageService,
     contextTools: {} as never,
     searchService: {} as never,
     messageModel: {
@@ -281,7 +431,8 @@ test('ignore_message persists an internal no-reply marker', async () => {
 
   const result = await registry.execute('ignore_message', {
     messageId: 123,
-    reason: 'positive laughter after bot joke; reaction/reply would be too much',
+    reason:
+      'positive laughter after bot joke; reaction/reply would be too much',
   });
 
   assert.deepEqual(result, {
@@ -312,6 +463,7 @@ test('edit_own_message updates the local message text after Telegram succeeds', 
       setMessageReaction: async () => true,
     },
     delivery: {} as never,
+    imageService: disabledImageService,
     contextTools: {} as never,
     searchService: {} as never,
     messageModel: {
@@ -345,6 +497,7 @@ test('delete_own_message marks the local bot message deleted after Telegram succ
       setMessageReaction: async () => true,
     },
     delivery: {} as never,
+    imageService: disabledImageService,
     contextTools: {} as never,
     searchService: {} as never,
     messageModel: {

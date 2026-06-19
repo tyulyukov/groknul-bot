@@ -6,10 +6,65 @@ import {
   PopulatedMessageReaction,
 } from '../database/models/Message.js';
 import { TelegramUser } from '../database/models/TelegramUser.js';
-import { AiClient } from './ai-client.service.js';
+import {
+  AiClient,
+  type GeneratedImage,
+  type ImageAspectRatio,
+} from './ai-client.service.js';
+
+export interface GenerateImageServiceInput {
+  prompt: string;
+  aspectRatio?: ImageAspectRatio;
+}
+
+export interface AmbientMemeIdea {
+  prompt: string;
+  caption: string;
+}
+
+export const parseAmbientMemeIdea = (raw: string): AmbientMemeIdea | null => {
+  const text = raw.trim();
+  if (!text || /^NOOP$/i.test(text)) return null;
+
+  const fencedJson = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const json = (fencedJson?.[1] ?? text).trim();
+
+  try {
+    const parsed = JSON.parse(json) as Partial<AmbientMemeIdea>;
+    const prompt =
+      typeof parsed.prompt === 'string' ? parsed.prompt.trim() : '';
+    const caption =
+      typeof parsed.caption === 'string' ? parsed.caption.trim() : '';
+
+    if (!prompt || !caption) return null;
+
+    return {
+      prompt: prompt.slice(0, 1_000),
+      caption: caption.slice(0, 180),
+    };
+  } catch {
+    return null;
+  }
+};
 
 export class AiService {
   constructor(private readonly aiClient = new AiClient()) {}
+
+  async generateImage(
+    input: GenerateImageServiceInput,
+  ): Promise<GeneratedImage | null> {
+    try {
+      return await this.aiClient.generateImage({
+        model: config.openRouter.models.image,
+        prompt: input.prompt,
+        aspectRatio: input.aspectRatio,
+        imageSize: '1K',
+      });
+    } catch (error) {
+      logger.error(error, 'Image generation failed');
+      return null;
+    }
+  }
 
   async summarizeText(blocks: string[], instruction: string): Promise<string> {
     const content = blocks.join('\n\n');
@@ -159,6 +214,57 @@ export class AiService {
       return text;
     } catch (error) {
       logger.error(error, 'Failed to generate ambient interjection');
+      return null;
+    }
+  }
+
+  async generateAmbientMemeIdea(
+    messages: PopulatedMessage[],
+    botUsername: string,
+  ): Promise<AmbientMemeIdea | null> {
+    try {
+      logger.info(
+        {
+          messagesCount: messages.length,
+          model: config.openRouter.models.reply,
+        },
+        'Ambient: starting meme idea generation',
+      );
+
+      const contextMessages = this.buildContext(
+        messages.slice(0, 40),
+        botUsername,
+      );
+      const completion = await this.aiClient.completeRaw({
+        model: config.openRouter.models.reply,
+        // @ts-expect-error OpenRouter pass-through for low-reasoning reply model calls
+        reasoning: { effort: 'low' },
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You decide whether a recent Telegram chat moment deserves an ambient visual meme. Return EXACTLY "NOOP" unless there is a very clear funny visual angle. If there is, return compact JSON with keys prompt and caption only. prompt should describe a safe meme image to generate, with no private likenesses, no hateful/dehumanizing content, and no copyrighted character/style requests. caption should be a short natural Telegram caption.',
+          },
+          ...contextMessages,
+          {
+            role: 'system',
+            content:
+              'Output strict JSON like {"prompt":"...","caption":"..."} or exactly NOOP. No markdown.',
+          },
+        ],
+        max_completion_tokens: 260,
+        temperature: 0.8,
+      });
+
+      const text = completion.choices[0]?.message?.content?.trim() || '';
+      const idea = parseAmbientMemeIdea(text);
+      logger.info(
+        { generated: idea !== null },
+        'Ambient: meme idea generation completed',
+      );
+      return idea;
+    } catch (error) {
+      logger.error(error, 'Failed to generate ambient meme idea');
       return null;
     }
   }

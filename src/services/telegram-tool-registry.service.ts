@@ -1,8 +1,22 @@
-import type { AgentToolDefinition, AgentToolRegistry } from './agent-runner.service.js';
+import type {
+  AgentToolDefinition,
+  AgentToolRegistry,
+} from './agent-runner.service.js';
+import {
+  IMAGE_ASPECT_RATIOS,
+  isImageAspectRatio,
+  type GeneratedImage,
+  type ImageAspectRatio,
+} from './ai-client.service.js';
 import type { ContextToolService } from './context-tool.service.js';
 import type { MessageModel } from '../database/models/Message.js';
 import type { SearxngSearchService } from './searxng-search.service.js';
 import {
+  RuntimeCodexOAuthStatusProvider,
+  type CodexOAuthStatusProvider,
+} from './codex-oauth-status.service.js';
+import {
+  buildGeneratedPhotoPayload,
   MAX_SEND_ITEMS,
   parseSendPayload,
   type SendPayload,
@@ -12,19 +26,19 @@ import { markdownToTelegramHtml } from '../utils/markdown-to-telegram-html.js';
 import { MESSAGE_TYPE } from '../common/message-types.js';
 
 export interface TelegramActionApi {
-    deleteMessage(chatId: number, messageId: number): Promise<unknown>;
-    editMessageText(
-      chatId: number,
-      messageId: number,
-      text: string,
-      other?: Record<string, unknown>,
-    ): Promise<unknown>;
-    setMessageReaction(
-      chatId: number,
-      messageId: number,
-      reaction: unknown[],
-      other?: Record<string, unknown>,
-    ): Promise<unknown>;
+  deleteMessage(chatId: number, messageId: number): Promise<unknown>;
+  editMessageText(
+    chatId: number,
+    messageId: number,
+    text: string,
+    other?: Record<string, unknown>,
+  ): Promise<unknown>;
+  setMessageReaction(
+    chatId: number,
+    messageId: number,
+    reaction: unknown[],
+    other?: Record<string, unknown>,
+  ): Promise<unknown>;
 }
 
 interface TelegramToolRegistryInput {
@@ -33,6 +47,13 @@ interface TelegramToolRegistryInput {
   triggerUserTelegramId?: number;
   api: TelegramActionApi;
   delivery: TelegramRichDeliveryService;
+  imageService: {
+    generateImage(input: {
+      prompt: string;
+      aspectRatio?: ImageAspectRatio;
+    }): Promise<GeneratedImage | null>;
+  };
+  codexOAuthStatus?: CodexOAuthStatusProvider;
   contextTools: ContextToolService;
   searchService: SearxngSearchService;
   messageModel: Pick<
@@ -48,60 +69,110 @@ interface TelegramToolRegistryInput {
 
 export class TelegramToolRegistry implements AgentToolRegistry {
   private usedReplyMetadata = false;
+  private readonly codexOAuthStatus: CodexOAuthStatusProvider;
 
-  constructor(private readonly input: TelegramToolRegistryInput) {}
+  constructor(private readonly input: TelegramToolRegistryInput) {
+    this.codexOAuthStatus =
+      input.codexOAuthStatus ?? new RuntimeCodexOAuthStatusProvider();
+  }
 
   getToolDefinitions(): AgentToolDefinition[] {
     return [
-      this.tool('send', `Send 1-${MAX_SEND_ITEMS} user-visible Telegram message bubbles. Keep each bubble short, natural, and Poke-like; use 1 bubble by default, 2 for a setup + result, and 3 only when the extra beat clearly helps. Put only natural chat text in richMarkdown/plainText; never put JSON, tool payloads, metadata, or {"items":...} text inside a message item.`, {
-        type: 'object',
-        properties: {
-          items: {
-            type: 'array',
-            minItems: 1,
-            maxItems: MAX_SEND_ITEMS,
+      this.tool(
+        'send',
+        `Send 1-${MAX_SEND_ITEMS} user-visible Telegram message bubbles. Keep each bubble short, natural, and Poke-like; use 1 bubble by default, 2 for a setup + result, and 3 only when the extra beat clearly helps. Put only natural chat text in richMarkdown/plainText; never put JSON, tool payloads, metadata, or {"items":...} text inside a message item.`,
+        {
+          type: 'object',
+          properties: {
             items: {
-              type: 'object',
-              properties: {
-                richMarkdown: { type: 'string' },
-                richHtml: { type: 'string' },
-                plainText: { type: 'string' },
-                replyToMessageId: { type: 'number' },
-                delayHintMs: { type: 'number' },
+              type: 'array',
+              minItems: 1,
+              maxItems: MAX_SEND_ITEMS,
+              items: {
+                type: 'object',
+                properties: {
+                  richMarkdown: { type: 'string' },
+                  richHtml: { type: 'string' },
+                  plainText: { type: 'string' },
+                  replyToMessageId: { type: 'number' },
+                  delayHintMs: { type: 'number' },
+                },
+                required: ['plainText'],
               },
-              required: ['plainText'],
             },
+            continueAfter: { type: 'boolean' },
           },
-          continueAfter: { type: 'boolean' },
+          required: ['items'],
         },
-        required: ['items'],
-      }),
-      this.tool('get_recent_messages', 'Fetch the last N raw chat messages, optionally only messages from the last sinceMinutes minutes. Use this for fresh context and vibe when the exact anchor message does not matter.', {
-        type: 'object',
-        properties: {
-          limit: { type: 'number' },
-          sinceMinutes: { type: 'number' },
+      ),
+      ...(this.codexOAuthStatus.isAvailable()
+        ? [
+            this.tool(
+              'generate_image',
+              'Generate one image and send it as a Telegram photo. Use only when the user clearly asks for an image/picture/meme/sticker-like visual, or when a rare ambient meme opportunity is explicitly selected by system logic. Do not use this for ordinary text replies. Keep prompts safe: no private likenesses, no hateful/dehumanizing content, and no copyrighted character/style requests.',
+              {
+                type: 'object',
+                properties: {
+                  prompt: {
+                    type: 'string',
+                    description:
+                      'Detailed prompt for the image model. Include the meme subject, visual composition, and any text that should appear in the image.',
+                  },
+                  caption: {
+                    type: 'string',
+                    description:
+                      'Short Telegram caption to send with the photo.',
+                  },
+                  replyToMessageId: { type: 'number' },
+                  aspectRatio: {
+                    type: 'string',
+                    enum: [...IMAGE_ASPECT_RATIOS],
+                  },
+                  continueAfter: { type: 'boolean' },
+                },
+                required: ['prompt'],
+              },
+            ),
+          ]
+        : []),
+      this.tool(
+        'get_recent_messages',
+        'Fetch the last N raw chat messages, optionally only messages from the last sinceMinutes minutes. Use this for fresh context and vibe when the exact anchor message does not matter.',
+        {
+          type: 'object',
+          properties: {
+            limit: { type: 'number' },
+            sinceMinutes: { type: 'number' },
+          },
+          required: ['limit'],
         },
-        required: ['limit'],
-      }),
-      this.tool('get_messages_before', 'Fetch the N messages immediately above/before a specific Telegram message in this chat. Use this when the current request is vague, refers to "this/that/it/там/это", or seems to depend on nearby chat/photo context that was not in currentMessageDetails or replyContext. Ask for 5-10 first; increase only if needed.', {
-        type: 'object',
-        properties: {
-          messageId: { type: 'number' },
-          limit: { type: 'number' },
+      ),
+      this.tool(
+        'get_messages_before',
+        'Fetch the N messages immediately above/before a specific Telegram message in this chat. Use this when the current request is vague, refers to "this/that/it/там/это", or seems to depend on nearby chat/photo context that was not in currentMessageDetails or replyContext. Ask for 5-10 first; increase only if needed.',
+        {
+          type: 'object',
+          properties: {
+            messageId: { type: 'number' },
+            limit: { type: 'number' },
+          },
+          required: ['messageId'],
         },
-        required: ['messageId'],
-      }),
-      this.tool('search_messages', 'Fetch persisted chat messages by optional text query, date range, author, and limit. Query is optional; use since/until with limit to fetch messages from a period of time.', {
-        type: 'object',
-        properties: {
-          query: { type: 'string' },
-          since: { type: 'string' },
-          until: { type: 'string' },
-          fromUser: { type: 'number' },
-          limit: { type: 'number' },
+      ),
+      this.tool(
+        'search_messages',
+        'Fetch persisted chat messages by optional text query, date range, author, and limit. Query is optional; use since/until with limit to fetch messages from a period of time.',
+        {
+          type: 'object',
+          properties: {
+            query: { type: 'string' },
+            since: { type: 'string' },
+            until: { type: 'string' },
+            fromUser: { type: 'number' },
+            limit: { type: 'number' },
+          },
         },
-      }),
+      ),
       this.tool('get_reply_thread', 'Follow the reply chain for a message.', {
         type: 'object',
         properties: {
@@ -110,35 +181,43 @@ export class TelegramToolRegistry implements AgentToolRegistry {
         },
         required: ['messageId'],
       }),
-      this.tool('summarize_messages', 'Summarize selected messages, the last N messages, or a bounded message period.', {
-        type: 'object',
-        properties: {
-          messageIds: { type: 'array', items: { type: 'number' } },
-          range: {
-            type: 'object',
-            properties: {
-              limit: { type: 'number' },
-              since: { type: 'string' },
-              until: { type: 'string' },
-              fromUser: { type: 'number' },
+      this.tool(
+        'summarize_messages',
+        'Summarize selected messages, the last N messages, or a bounded message period.',
+        {
+          type: 'object',
+          properties: {
+            messageIds: { type: 'array', items: { type: 'number' } },
+            range: {
+              type: 'object',
+              properties: {
+                limit: { type: 'number' },
+                since: { type: 'string' },
+                until: { type: 'string' },
+                fromUser: { type: 'number' },
+              },
             },
           },
         },
-      }),
+      ),
       this.tool('get_chat_digest', 'Get broad stored chat digest.', {
         type: 'object',
         properties: { period: { type: 'string' } },
         required: ['period'],
       }),
-      this.tool('get_chat_summaries', 'Fetch stored summary blocks by level, limit, and optional date range. Use level 0 for most recent message-block summaries; higher levels are broader/older digests.', {
-        type: 'object',
-        properties: {
-          level: { type: 'number' },
-          limit: { type: 'number' },
-          since: { type: 'string' },
-          until: { type: 'string' },
+      this.tool(
+        'get_chat_summaries',
+        'Fetch stored summary blocks by level, limit, and optional date range. Use level 0 for most recent message-block summaries; higher levels are broader/older digests.',
+        {
+          type: 'object',
+          properties: {
+            level: { type: 'number' },
+            limit: { type: 'number' },
+            since: { type: 'string' },
+            until: { type: 'string' },
+          },
         },
-      }),
+      ),
       this.tool('search_memories', 'Search chat memories.', {
         type: 'object',
         properties: {
@@ -170,23 +249,31 @@ export class TelegramToolRegistry implements AgentToolRegistry {
         },
         required: ['query'],
       }),
-      this.tool('react_to_message', 'React to a chat message instead of sending a text bubble. Use this for pure emotion or lightweight acknowledgement: memes, LMAO, thanks, nice, wild, agreement, approval, or a tiny roast beat. By default this ends the agent reply; set continueAfter=true only when a visible follow-up message is genuinely needed.', {
-        type: 'object',
-        properties: {
-          messageId: { type: 'number' },
-          reaction: { type: 'string' },
-          continueAfter: { type: 'boolean' },
+      this.tool(
+        'react_to_message',
+        'React to a chat message instead of sending a text bubble. Use this for pure emotion or lightweight acknowledgement: memes, LMAO, thanks, nice, wild, agreement, approval, or a tiny roast beat. By default this ends the agent reply; set continueAfter=true only when a visible follow-up message is genuinely needed.',
+        {
+          type: 'object',
+          properties: {
+            messageId: { type: 'number' },
+            reaction: { type: 'string' },
+            continueAfter: { type: 'boolean' },
+          },
+          required: ['messageId', 'reaction'],
         },
-        required: ['messageId', 'reaction'],
-      }),
-      this.tool('ignore_message', 'Deliberately send no visible reply and save an internal no-reply marker. Use when silence is the most human response, especially after laughter/acknowledgement/reaction bait where another bot bubble would be cringe.', {
-        type: 'object',
-        properties: {
-          messageId: { type: 'number' },
-          reason: { type: 'string' },
+      ),
+      this.tool(
+        'ignore_message',
+        'Deliberately send no visible reply and save an internal no-reply marker. Use when silence is the most human response, especially after laughter/acknowledgement/reaction bait where another bot bubble would be cringe.',
+        {
+          type: 'object',
+          properties: {
+            messageId: { type: 'number' },
+            reason: { type: 'string' },
+          },
+          required: ['messageId', 'reason'],
         },
-        required: ['messageId', 'reason'],
-      }),
+      ),
       this.tool('edit_own_message', 'Edit a message sent by this bot.', {
         type: 'object',
         properties: {
@@ -207,6 +294,8 @@ export class TelegramToolRegistry implements AgentToolRegistry {
     switch (name) {
       case 'send':
         return this.send(args);
+      case 'generate_image':
+        return this.generateImage(args);
       case 'get_recent_messages':
         return this.input.contextTools.getRecentMessages(
           this.input.chatTelegramId,
@@ -224,24 +313,32 @@ export class TelegramToolRegistry implements AgentToolRegistry {
           },
         );
       case 'search_messages':
-        return this.input.contextTools.searchMessages(this.input.chatTelegramId, {
-          query: this.stringArg(args.query),
-          since: this.stringArg(args.since),
-          until: this.stringArg(args.until),
-          fromUser: this.optionalNumberArg(args.fromUser),
-          limit: this.optionalNumberArg(args.limit),
-        });
+        return this.input.contextTools.searchMessages(
+          this.input.chatTelegramId,
+          {
+            query: this.stringArg(args.query),
+            since: this.stringArg(args.since),
+            until: this.stringArg(args.until),
+            fromUser: this.optionalNumberArg(args.fromUser),
+            limit: this.optionalNumberArg(args.limit),
+          },
+        );
       case 'get_reply_thread':
-        return this.input.contextTools.getReplyThread(this.input.chatTelegramId, {
-          messageId: this.numberArg(args.messageId, 0),
-          limit: this.optionalNumberArg(args.limit),
-        });
+        return this.input.contextTools.getReplyThread(
+          this.input.chatTelegramId,
+          {
+            messageId: this.numberArg(args.messageId, 0),
+            limit: this.optionalNumberArg(args.limit),
+          },
+        );
       case 'summarize_messages':
         return this.input.contextTools.summarizeMessages(
           this.input.chatTelegramId,
           {
             messageIds: Array.isArray(args.messageIds)
-              ? args.messageIds.filter((id): id is number => typeof id === 'number')
+              ? args.messageIds.filter(
+                  (id): id is number => typeof id === 'number',
+                )
               : undefined,
             range:
               args.range && typeof args.range === 'object'
@@ -250,9 +347,12 @@ export class TelegramToolRegistry implements AgentToolRegistry {
           },
         );
       case 'get_chat_digest':
-        return this.input.contextTools.getChatDigest(this.input.chatTelegramId, {
-          period: this.stringArg(args.period) ?? 'recent',
-        });
+        return this.input.contextTools.getChatDigest(
+          this.input.chatTelegramId,
+          {
+            period: this.stringArg(args.period) ?? 'recent',
+          },
+        );
       case 'get_chat_summaries':
         return this.input.contextTools.getChatSummaries(
           this.input.chatTelegramId,
@@ -330,6 +430,40 @@ export class TelegramToolRegistry implements AgentToolRegistry {
     );
   }
 
+  private async generateImage(args: Record<string, unknown>): Promise<unknown> {
+    if (!this.codexOAuthStatus.isAvailable()) {
+      return { status: 'disabled', reason: 'codex_oauth_required' };
+    }
+
+    const prompt = this.stringArg(args.prompt)?.trim() ?? '';
+    if (!prompt) {
+      return { status: 'invalid_args', reason: 'prompt_required' };
+    }
+
+    const caption = (
+      this.stringArg(args.caption)?.trim() || 'generated image'
+    ).slice(0, 200);
+    const image = await this.input.imageService.generateImage({
+      prompt: prompt.slice(0, 1_500),
+      aspectRatio: this.imageAspectRatioArg(args.aspectRatio),
+    });
+
+    if (!image) {
+      return { status: 'error', reason: 'image_generation_failed' };
+    }
+
+    const replyToMessageId = this.optionalNumberArg(args.replyToMessageId);
+    const payload = this.onlyFirstItemCanReply(
+      buildGeneratedPhotoPayload({
+        caption,
+        imageDataUrl: image.dataUrl,
+        replyToMessageId,
+      }),
+    );
+
+    return this.input.delivery.send(this.input.chatTelegramId, payload);
+  }
+
   private onlyFirstItemCanReply(payload: SendPayload): SendPayload {
     return {
       items: payload.items.map((item, index) => {
@@ -347,7 +481,9 @@ export class TelegramToolRegistry implements AgentToolRegistry {
     };
   }
 
-  private async reactToMessage(args: Record<string, unknown>): Promise<unknown> {
+  private async reactToMessage(
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
     const messageId = this.numberArg(args.messageId, 0);
     const reaction = this.stringArg(args.reaction) ?? '👍';
     await this.input.api.setMessageReaction(
@@ -394,7 +530,9 @@ export class TelegramToolRegistry implements AgentToolRegistry {
     return { status: 'ok', ignored: true, messageId };
   }
 
-  private async editOwnMessage(args: Record<string, unknown>): Promise<unknown> {
+  private async editOwnMessage(
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
     const messageId = this.numberArg(args.messageId, 0);
     const message = await this.input.messageModel.findByMessageTelegramId(
       messageId,
@@ -420,7 +558,9 @@ export class TelegramToolRegistry implements AgentToolRegistry {
     return result;
   }
 
-  private async deleteOwnMessage(args: Record<string, unknown>): Promise<unknown> {
+  private async deleteOwnMessage(
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
     const messageId = this.numberArg(args.messageId, 0);
     const message = await this.input.messageModel.findByMessageTelegramId(
       messageId,
@@ -456,10 +596,20 @@ export class TelegramToolRegistry implements AgentToolRegistry {
   }
 
   private numberArg(value: unknown, fallback: number): number {
-    return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+    return typeof value === 'number' && Number.isFinite(value)
+      ? value
+      : fallback;
   }
 
   private optionalNumberArg(value: unknown): number | undefined {
-    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+    return typeof value === 'number' && Number.isFinite(value)
+      ? value
+      : undefined;
+  }
+
+  private imageAspectRatioArg(value: unknown): ImageAspectRatio | undefined {
+    return typeof value === 'string' && isImageAspectRatio(value)
+      ? value
+      : undefined;
   }
 }

@@ -351,3 +351,102 @@ test('AiClient does not use Codex for non-OpenAI models', async () => {
   assert.equal(result.choices[0]?.message.content, 'openrouter');
   assert.equal(codexCalls, 0);
 });
+
+test('AiClient generates an image through OpenRouter chat completions', async () => {
+  let seenParams:
+    | OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming
+    | undefined;
+  const openai = createOpenAiStub(async (params) => {
+    seenParams = params;
+    return {
+      ...completion('done'),
+      choices: [
+        {
+          index: 0,
+          finish_reason: 'stop',
+          logprobs: null,
+          message: {
+            role: 'assistant',
+            content: 'done',
+            refusal: null,
+            images: [
+              {
+                image_url: {
+                  url: 'data:image/png;base64,aW1hZ2U=',
+                },
+              },
+            ],
+          },
+        },
+      ],
+    } as unknown as OpenAI.Chat.Completions.ChatCompletion;
+  });
+  const client = new AiClient(openai, {
+    maxAttempts: 1,
+    baseDelayMs: 0,
+    maxDelayMs: 0,
+  });
+
+  const result = await client.generateImage({
+    model: 'openai/gpt-5.4-image-2',
+    prompt: 'make a tiny meme about flaky tests',
+    aspectRatio: '1:1',
+    imageSize: '1K',
+  });
+
+  assert.equal(result.dataUrl, 'data:image/png;base64,aW1hZ2U=');
+  assert.equal(seenParams?.model, 'openai/gpt-5.4-image-2');
+  assert.deepEqual(
+    (seenParams as unknown as Record<string, unknown> | undefined)?.modalities,
+    ['image', 'text'],
+  );
+  assert.deepEqual(
+    (seenParams as unknown as Record<string, unknown> | undefined)
+      ?.image_config,
+    {
+      aspect_ratio: '1:1',
+      image_size: '1K',
+    },
+  );
+});
+
+test('AiClient rejects unsupported generated image data URL formats', async () => {
+  const openai = createOpenAiStub(
+    async () =>
+      ({
+        ...completion('done'),
+        choices: [
+          {
+            index: 0,
+            finish_reason: 'stop',
+            logprobs: null,
+            message: {
+              role: 'assistant',
+              content: 'done',
+              refusal: null,
+              images: [
+                {
+                  image_url: {
+                    url: 'data:image/gif;base64,R0lGODlh',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }) as unknown as OpenAI.Chat.Completions.ChatCompletion,
+  );
+  const client = new AiClient(openai, {
+    maxAttempts: 1,
+    baseDelayMs: 0,
+    maxDelayMs: 0,
+  });
+
+  await assert.rejects(
+    client.generateImage({
+      model: 'openai/gpt-5.4-image-2',
+      prompt: 'make a tiny meme',
+    }),
+    /supported image data URL/,
+  );
+});

@@ -13,16 +13,20 @@ test('createConfig loads model names from env with production defaults', () => {
     ...requiredEnv,
     OPENROUTER_REPLY_MODEL: 'custom/reply',
     OPENROUTER_AGENT_MODEL: 'custom/agent',
+    OPENROUTER_IMAGE_MODEL: 'custom/image',
     OPENROUTER_SUMMARY_MODEL: 'custom/summary',
     OPENROUTER_VISION_MODEL: 'custom/vision',
+    TELEGRAM_BOT_AMBIENT_IMAGE_PROBABILITY: '0.2',
   });
 
   assert.deepEqual(config.openRouter.models, {
     reply: 'custom/reply',
     agent: 'custom/agent',
+    image: 'custom/image',
     summary: 'custom/summary',
     vision: 'custom/vision',
   });
+  assert.equal(config.telegram.ambient.imageProbability, 0.2);
 });
 
 test('createConfig defaults OpenRouter and SearXNG agent settings', () => {
@@ -30,6 +34,7 @@ test('createConfig defaults OpenRouter and SearXNG agent settings', () => {
 
   assert.equal(config.openRouter.models.reply, 'openai/gpt-5.5');
   assert.equal(config.openRouter.models.agent, 'openai/gpt-5.5');
+  assert.equal(config.openRouter.models.image, 'openai/gpt-5.4-image-2');
   assert.equal(config.openRouter.models.summary, 'openai/gpt-5.4-mini');
   assert.equal(config.openRouter.models.vision, 'openai/gpt-5.4-mini');
   assert.equal(config.codex.ownerTelegramId, 870_452_692);
@@ -40,6 +45,7 @@ test('createConfig defaults OpenRouter and SearXNG agent settings', () => {
   assert.equal(config.searxng.baseUrl, 'http://127.0.0.1:8080');
   assert.equal(config.searxng.maxResults, 5);
   assert.equal(config.telegram.webhookTimeoutMs, 9_000);
+  assert.equal(config.telegram.ambient.imageProbability, 0.05);
   assert.equal(config.agent.maxToolCalls, 10);
 });
 

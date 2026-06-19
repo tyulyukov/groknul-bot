@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { config } from '../common/config.js';
+import { parseGeneratedImageDataUrl } from '../common/generated-image.js';
 import logger from '../common/logger.js';
 import type {
   AgentChatClient,
@@ -30,6 +31,37 @@ interface CodexProviderClient {
   ): Promise<OpenAI.Chat.Completions.ChatCompletion>;
 }
 
+export const IMAGE_ASPECT_RATIOS = [
+  '1:1',
+  '2:3',
+  '3:2',
+  '3:4',
+  '4:3',
+  '4:5',
+  '5:4',
+  '9:16',
+  '16:9',
+  '21:9',
+] as const;
+
+export type ImageAspectRatio = (typeof IMAGE_ASPECT_RATIOS)[number];
+
+export const isImageAspectRatio = (value: string): value is ImageAspectRatio =>
+  IMAGE_ASPECT_RATIOS.includes(value as ImageAspectRatio);
+
+export type ImageSize = '0.5K' | '1K' | '2K' | '4K';
+
+export interface GenerateImageInput {
+  model: string;
+  prompt: string;
+  aspectRatio?: ImageAspectRatio;
+  imageSize?: ImageSize;
+}
+
+export interface GeneratedImage {
+  dataUrl: string;
+}
+
 interface AiClientRetryOptions {
   maxAttempts: number;
   baseDelayMs: number;
@@ -43,6 +75,23 @@ type RetryableErrorShape = {
   errno?: unknown;
   status?: unknown;
   cause?: unknown;
+};
+
+type OpenRouterImage = {
+  image_url?: {
+    url?: unknown;
+  };
+  imageUrl?: {
+    url?: unknown;
+  };
+};
+
+type OpenRouterImageCompletion = OpenAI.Chat.Completions.ChatCompletion & {
+  choices: Array<{
+    message?: OpenAI.Chat.Completions.ChatCompletionMessage & {
+      images?: OpenRouterImage[];
+    };
+  }>;
 };
 
 export class AiClient implements AgentChatClient {
@@ -76,13 +125,17 @@ export class AiClient implements AgentChatClient {
 
   async complete(input: CompleteChatInput): Promise<AgentChatCompletion> {
     const startedAt = Date.now();
-    const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
-      model: input.model,
-      messages: input.messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-      tools: input.tools as OpenAI.Chat.Completions.ChatCompletionTool[] | undefined,
-      temperature: input.temperature,
-      max_completion_tokens: input.maxTokens,
-    };
+    const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming =
+      {
+        model: input.model,
+        messages:
+          input.messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+        tools: input.tools as
+          | OpenAI.Chat.Completions.ChatCompletionTool[]
+          | undefined,
+        temperature: input.temperature,
+        max_completion_tokens: input.maxTokens,
+      };
     if (input.reasoningEffort) {
       // @ts-expect-error OpenRouter pass-through for model reasoning controls
       params.reasoning = { effort: input.reasoningEffort };
@@ -153,6 +206,51 @@ export class AiClient implements AgentChatClient {
     return completion;
   }
 
+  async generateImage(input: GenerateImageInput): Promise<GeneratedImage> {
+    const startedAt = Date.now();
+    const imageConfig: Record<string, string> = {};
+    if (input.aspectRatio) imageConfig.aspect_ratio = input.aspectRatio;
+    if (input.imageSize) imageConfig.image_size = input.imageSize;
+
+    const params = {
+      model: input.model,
+      messages: [{ role: 'user', content: input.prompt }],
+      modalities: ['image', 'text'],
+      stream: false,
+      ...(Object.keys(imageConfig).length > 0
+        ? { image_config: imageConfig }
+        : {}),
+    } satisfies Record<string, unknown>;
+
+    const { completion, provider } = await this.createChatCompletion(
+      params as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
+    );
+    const dataUrl = this.extractGeneratedImageDataUrl(
+      completion as OpenRouterImageCompletion,
+    );
+
+    if (!dataUrl) {
+      throw new Error(
+        'Image generation response did not include a supported image data URL',
+      );
+    }
+
+    logger.info(
+      {
+        model: input.model,
+        provider,
+        durationMs: Date.now() - startedAt,
+        promptLength: input.prompt.length,
+        aspectRatio: input.aspectRatio,
+        imageSize: input.imageSize,
+        tokensUsed: completion.usage?.total_tokens,
+      },
+      'AI image generation finished',
+    );
+
+    return { dataUrl };
+  }
+
   private async createChatCompletion(
     params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
   ): Promise<{
@@ -170,9 +268,10 @@ export class AiClient implements AgentChatClient {
           throw error;
         }
 
-        const log = error instanceof CodexAuthUnavailableError
-          ? logger.debug.bind(logger)
-          : logger.warn.bind(logger);
+        const log =
+          error instanceof CodexAuthUnavailableError
+            ? logger.debug.bind(logger)
+            : logger.warn.bind(logger);
         log(
           {
             model: params.model,
@@ -194,7 +293,11 @@ export class AiClient implements AgentChatClient {
   ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
     let lastError: unknown;
 
-    for (let attempt = 1; attempt <= this.retryOptions.maxAttempts; attempt += 1) {
+    for (
+      let attempt = 1;
+      attempt <= this.retryOptions.maxAttempts;
+      attempt += 1
+    ) {
       try {
         return await this.openai.chat.completions.create(params);
       } catch (error) {
@@ -228,6 +331,20 @@ export class AiClient implements AgentChatClient {
     throw lastError;
   }
 
+  private extractGeneratedImageDataUrl(
+    completion: OpenRouterImageCompletion,
+  ): string | undefined {
+    const images = completion.choices[0]?.message?.images ?? [];
+    for (const image of images) {
+      const url = image.image_url?.url ?? image.imageUrl?.url;
+      if (typeof url === 'string' && parseGeneratedImageDataUrl(url)) {
+        return url;
+      }
+    }
+
+    return undefined;
+  }
+
   private calculateRetryDelayMs(attempt: number): number {
     const exponentialDelay = this.retryOptions.baseDelayMs * 2 ** (attempt - 1);
     const jitterMs = Math.floor(Math.random() * 100);
@@ -240,7 +357,8 @@ export class AiClient implements AgentChatClient {
     const shapes = [current, nested];
 
     return shapes.some((shape) => {
-      const status = typeof shape.status === 'number' ? shape.status : undefined;
+      const status =
+        typeof shape.status === 'number' ? shape.status : undefined;
       if (
         status === 408 ||
         status === 409 ||

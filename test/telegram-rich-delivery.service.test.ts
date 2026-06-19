@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { InputFile } from 'grammy';
 import {
   calculateHumanDelayMs,
   MAX_SEND_ITEMS,
@@ -86,7 +87,10 @@ test('send falls back from rich markdown to HTML sendMessage and persists delive
     'sendMessage:<b>hello</b>',
   ]);
   assert.equal(result.deliveries[0]?.format, 'html');
-  assert.equal(result.deliveries[0]?.fallbackReason, 'rich_markdown_failed: rich unsupported');
+  assert.equal(
+    result.deliveries[0]?.fallbackReason,
+    'rich_markdown_failed: rich unsupported',
+  );
   assert.deepEqual(saved[0], {
     telegramId: 700,
     chatTelegramId: -100,
@@ -103,6 +107,7 @@ test('send falls back from rich markdown to HTML sendMessage and persists delive
 });
 
 test('send persists photo attachment as photo with attachment caption text', async () => {
+  let sentPhoto: unknown;
   const api = {
     sendChatAction: async () => undefined,
     sendMessage: async () => {
@@ -110,9 +115,13 @@ test('send persists photo attachment as photo with attachment caption text', asy
     },
     sendPhoto: async (
       _chatId: number,
-      _photo: string,
+      photo: unknown,
       options: Record<string, unknown> = {},
     ) => ({
+      ...(() => {
+        sentPhoto = photo;
+        return {};
+      })(),
       message_id: 701,
       date: 1_778_800_001,
       caption:
@@ -140,7 +149,7 @@ test('send persists photo attachment as photo with attachment caption text', asy
         attachments: [
           {
             type: 'photo',
-            fileIdOrUrl: 'photo-file',
+            fileIdOrUrl: 'data:image/png;base64,aW1hZ2U=',
             captionRichMarkdown: '**photo caption**',
           },
         ],
@@ -148,6 +157,8 @@ test('send persists photo attachment as photo with attachment caption text', asy
     ],
   });
 
+  assert.ok(sentPhoto instanceof InputFile);
+  assert.equal((sentPhoto as InputFile).filename, 'generated-image.png');
   assert.deepEqual(saved[0], {
     telegramId: 701,
     chatTelegramId: -100,
@@ -165,6 +176,41 @@ test('send persists photo attachment as photo with attachment caption text', asy
     deliveryText: '<b>photo caption</b>',
     deliveryFallbackReason: undefined,
   });
+});
+
+test('send rejects unsupported generated image data URL attachments', async () => {
+  const service = new TelegramRichDeliveryService(
+    {
+      sendChatAction: async () => undefined,
+      sendMessage: async () => {
+        throw new Error('unused');
+      },
+      sendPhoto: async () => {
+        throw new Error('unused');
+      },
+    },
+    { sendRichMessage: async () => ({ message_id: 1, date: 1 }) },
+    { saveMessage: async () => undefined },
+    999,
+    { sleep: async () => undefined },
+  );
+
+  await assert.rejects(
+    service.send(-100, {
+      items: [
+        {
+          plainText: 'gif',
+          attachments: [
+            {
+              type: 'photo',
+              fileIdOrUrl: 'data:image/gif;base64,R0lGODlh',
+            },
+          ],
+        },
+      ],
+    }),
+    /Unsupported generated image data URL format/,
+  );
 });
 
 test('send caps deliveries even when passed an oversized payload directly', async () => {

@@ -22,6 +22,7 @@ export interface Config {
     ambient: {
       enabled: boolean;
       probability: number;
+      imageProbability: number;
       minCooldownSec: number;
       minGapMessages: number;
       maxContextAgeMinutes: number;
@@ -32,6 +33,7 @@ export interface Config {
     models: {
       reply: string;
       agent: string;
+      image: string;
       summary: string;
       vision: string;
     };
@@ -146,6 +148,11 @@ export const createConfig = (env: EnvSource): Config => ({
         'TELEGRAM_BOT_AMBIENT_PROBABILITY',
         0.03,
       ),
+      imageProbability: parseFloatValue(
+        env,
+        'TELEGRAM_BOT_AMBIENT_IMAGE_PROBABILITY',
+        0.05,
+      ),
       minCooldownSec: parseInteger(
         env,
         'TELEGRAM_BOT_AMBIENT_MIN_COOLDOWN_SEC',
@@ -168,6 +175,7 @@ export const createConfig = (env: EnvSource): Config => ({
     models: {
       reply: env.OPENROUTER_REPLY_MODEL || 'openai/gpt-5.5',
       agent: env.OPENROUTER_AGENT_MODEL || 'openai/gpt-5.5',
+      image: env.OPENROUTER_IMAGE_MODEL || 'openai/gpt-5.4-image-2',
       summary: env.OPENROUTER_SUMMARY_MODEL || 'openai/gpt-5.4-mini',
       vision: env.OPENROUTER_VISION_MODEL || 'openai/gpt-5.4-mini',
     },

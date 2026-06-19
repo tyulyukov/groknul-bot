@@ -6,6 +6,7 @@ import {
   type AgentReplyContextMessage,
 } from './agent-runner.service.js';
 import type { AiClient } from './ai-client.service.js';
+import type { AiService } from './ai.service.js';
 import type {
   ContextToolResult,
   ContextToolService,
@@ -20,6 +21,10 @@ import {
   TelegramToolRegistry,
   type TelegramActionApi,
 } from './telegram-tool-registry.service.js';
+import {
+  RuntimeCodexOAuthStatusProvider,
+  type CodexOAuthStatusProvider,
+} from './codex-oauth-status.service.js';
 
 export interface AgentResponseInput {
   api: TelegramApiLike;
@@ -183,9 +188,11 @@ const dateField = (value: unknown): string | undefined => {
 export class AgentResponseService {
   constructor(
     private readonly aiClient: AiClient,
+    private readonly aiService: AiService,
     private readonly contextToolService: ContextToolService,
     private readonly rawTelegramApiClient: RawTelegramApiClient,
     private readonly searxngSearchService: SearxngSearchService,
+    private readonly codexOAuthStatus: CodexOAuthStatusProvider = new RuntimeCodexOAuthStatusProvider(),
   ) {}
 
   async generateAndSend(
@@ -220,6 +227,8 @@ export class AgentResponseService {
       triggerUserTelegramId: dbTriggerMessage.userTelegramId,
       api: input.api,
       delivery,
+      imageService: this.aiService,
+      codexOAuthStatus: this.codexOAuthStatus,
       contextTools: this.contextToolService,
       searchService: this.searxngSearchService,
       messageModel,

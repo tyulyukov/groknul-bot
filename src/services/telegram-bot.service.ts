@@ -15,6 +15,7 @@ import { MessageReaction } from '../database/models/Message.js';
 import { API_CONSTANTS } from 'grammy';
 import { markdownToTelegramHtml } from '../utils/markdown-to-telegram-html.js';
 import { MESSAGE_TYPE } from '../common/message-types.js';
+import { maybeSendAmbientMeme } from './ambient-meme.service.js';
 import { getStartMessage } from '../common/start-message.js';
 import { AgentResponseService } from './agent-response.service.js';
 import { AiClient } from './ai-client.service.js';
@@ -24,6 +25,7 @@ import { SearxngSearchService } from './searxng-search.service.js';
 import { CodexAiClient } from './codex-ai-client.service.js';
 import { CodexOAuthService } from './codex-oauth.service.js';
 import { CodexTelegramCommandService } from './codex-telegram-command.service.js';
+import { RuntimeCodexOAuthStatusProvider } from './codex-oauth-status.service.js';
 import {
   buildTelegramPollContext,
   deriveTelegramMessageContent,
@@ -74,6 +76,7 @@ export class TelegramBotService {
   private readonly contextToolService: ContextToolService;
   private readonly agentResponseService: AgentResponseService;
   private readonly mediaContextService: MediaContextService;
+  private readonly codexOAuthStatus: RuntimeCodexOAuthStatusProvider;
   private runnerHandle?: RunnerHandle;
   private botUsername: string = '';
 
@@ -89,6 +92,7 @@ export class TelegramBotService {
       new CodexAiClient(this.codexOAuthService),
     );
     this.aiService = new AiService(this.aiClient);
+    this.codexOAuthStatus = new RuntimeCodexOAuthStatusProvider();
     this.contextToolService = new ContextToolService(
       database,
       this.aiService,
@@ -104,9 +108,11 @@ export class TelegramBotService {
     );
     this.agentResponseService = new AgentResponseService(
       this.aiClient,
+      this.aiService,
       this.contextToolService,
       new RawTelegramApiClient(config.telegram.apiKey),
       new SearxngSearchService(config.searxng),
+      this.codexOAuthStatus,
     );
     this.setupMiddleware();
     this.setupHandlers();
@@ -814,6 +820,24 @@ export class TelegramBotService {
       },
       'Ambient: prepared context window',
     );
+
+    if (
+      await maybeSendAmbientMeme({
+        api: ctx.api,
+        aiService: this.aiService,
+        codexOAuthStatus: this.codexOAuthStatus,
+        botUserTelegramId: this.bot.botInfo.id,
+        botUsername: this.botUsername,
+        chatTelegramId: chatId,
+        context,
+        messageModel,
+        triggerMessageId: triggerMessage.message_id,
+      })
+    ) {
+      ctx.session.lastAmbientAt = Date.now();
+      ctx.session.sinceAmbientCount = 0;
+      return;
+    }
 
     await ctx.replyWithChatAction('typing');
     const ambient = await this.aiService.generateAmbientInterjection(

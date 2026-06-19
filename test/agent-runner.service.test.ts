@@ -329,7 +329,10 @@ test('AgentRunner prompt makes progress bubbles conditional', async () => {
   });
 
   assert.match(systemPrompt, /Progress bubbles are optional/);
-  assert.match(systemPrompt, /Do not send a progress bubble for quick follow-ups/);
+  assert.match(
+    systemPrompt,
+    /Do not send a progress bubble for quick follow-ups/,
+  );
   assert.match(systemPrompt, /replyContext/);
   assert.match(systemPrompt, /short ambiguous commands/);
   assert.match(systemPrompt, /get_messages_before/);
@@ -469,6 +472,46 @@ test('AgentRunner continues after progress send when requested', async () => {
   assert.equal(result.status, 'sent');
   assert.deepEqual(executedTools, ['send', 'web_search', 'send']);
   assert.deepEqual(result.toolsUsed, ['send', 'web_search', 'send']);
+});
+
+test('AgentRunner stops after a generated image is sent', async () => {
+  const client: AgentChatClient = {
+    complete: async () => ({
+      message: {
+        role: 'assistant',
+        tool_calls: [
+          {
+            id: 'call_image',
+            type: 'function',
+            function: {
+              name: 'generate_image',
+              arguments: '{"prompt":"make a tiny meme","caption":"done"}',
+            },
+          },
+        ],
+      },
+    }),
+  };
+  const registry: AgentToolRegistry = {
+    getToolDefinitions: () => [],
+    execute: async () => ({
+      status: 'ok',
+      deliveries: [{ telegramId: 777, format: 'photo' }],
+    }),
+  };
+  const runner = new AgentRunner(client, registry, {
+    model: 'agent-model',
+    maxToolCalls: 10,
+  });
+
+  const result = await runner.run({
+    chatTelegramId: -100,
+    triggerMessageId: 123,
+    botUsername: 'groknul_bot',
+  });
+
+  assert.equal(result.status, 'sent');
+  assert.deepEqual(result.toolsUsed, ['generate_image']);
 });
 
 test('AgentRunner stops after a reaction-only tool call', async () => {

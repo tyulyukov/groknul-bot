@@ -1,3 +1,5 @@
+import { InputFile } from 'grammy';
+import { parseGeneratedImageDataUrl } from '../common/generated-image.js';
 import { markdownToTelegramHtml } from '../utils/markdown-to-telegram-html.js';
 import type { RawTelegramApiClientLike } from './raw-telegram-api-client.service.js';
 
@@ -37,6 +39,30 @@ export interface SendPayload {
   items: SendItem[];
 }
 
+export interface GeneratedPhotoPayloadInput {
+  caption: string;
+  imageDataUrl: string;
+  replyToMessageId?: number;
+}
+
+export const buildGeneratedPhotoPayload = (
+  input: GeneratedPhotoPayloadInput,
+): SendPayload => ({
+  items: [
+    {
+      plainText: input.caption,
+      replyToMessageId: input.replyToMessageId,
+      attachments: [
+        {
+          type: 'photo',
+          fileIdOrUrl: input.imageDataUrl,
+          captionPlainText: input.caption,
+        },
+      ],
+    },
+  ],
+});
+
 export const MAX_SEND_ITEMS = 3;
 
 export interface DeliveryResult {
@@ -54,12 +80,12 @@ export interface TelegramApiLike {
   ) => Promise<{ message_id: number; date: number; text?: string }>;
   sendPhoto?: (
     chatId: number,
-    photo: string,
+    photo: InputFile | string,
     options?: Record<string, unknown>,
   ) => Promise<{ message_id: number; date: number; caption?: string }>;
   sendDocument?: (
     chatId: number,
-    document: string,
+    document: InputFile | string,
     options?: Record<string, unknown>,
   ) => Promise<{ message_id: number; date: number; caption?: string }>;
   sendPoll?: (
@@ -112,7 +138,8 @@ const parseAttachments = (value: unknown): SendAttachment[] | undefined => {
     .map((item): SendAttachment | null => {
       if (!item || typeof item !== 'object') return null;
       const raw = item as Record<string, unknown>;
-      const type = raw.type === 'photo' || raw.type === 'document' ? raw.type : null;
+      const type =
+        raw.type === 'photo' || raw.type === 'document' ? raw.type : null;
       const fileIdOrUrl = stringValue(raw.fileIdOrUrl);
       if (!type || !fileIdOrUrl) return null;
       return {
@@ -132,7 +159,9 @@ const parsePoll = (value: unknown): SendPollPayload | undefined => {
   const raw = value as Record<string, unknown>;
   const question = stringValue(raw.question);
   const options = Array.isArray(raw.options)
-    ? raw.options.filter((option): option is string => typeof option === 'string')
+    ? raw.options.filter(
+        (option): option is string => typeof option === 'string',
+      )
     : [];
   if (!question || options.length < 2) return undefined;
 
@@ -213,7 +242,9 @@ export class TelegramRichDeliveryService {
     if (item.attachments?.length) {
       const results: DeliveryResult[] = [];
       for (const attachment of item.attachments) {
-        results.push(await this.sendAttachment(chatTelegramId, item, attachment));
+        results.push(
+          await this.sendAttachment(chatTelegramId, item, attachment),
+        );
       }
       return results;
     }
@@ -247,9 +278,15 @@ export class TelegramRichDeliveryService {
       }
     }
 
-    const html = item.richHtml ?? markdownToTelegramHtml(item.richMarkdown ?? item.plainText);
+    const html =
+      item.richHtml ??
+      markdownToTelegramHtml(item.richMarkdown ?? item.plainText);
     try {
-      const sent = await this.api.sendMessage(chatTelegramId, html, replyOptions);
+      const sent = await this.api.sendMessage(
+        chatTelegramId,
+        html,
+        replyOptions,
+      );
       await this.persist(chatTelegramId, item, sent, {
         format: 'html',
         finalText: html,
@@ -307,10 +344,14 @@ export class TelegramRichDeliveryService {
 
     const sent =
       attachment.type === 'photo'
-        ? await this.api.sendPhoto!(chatTelegramId, attachment.fileIdOrUrl, options)
+        ? await this.api.sendPhoto!(
+            chatTelegramId,
+            this.toTelegramUpload(attachment.fileIdOrUrl),
+            options,
+          )
         : await this.api.sendDocument!(
             chatTelegramId,
-            attachment.fileIdOrUrl,
+            this.toTelegramUpload(attachment.fileIdOrUrl),
             options,
           );
     const format = attachment.type;
@@ -383,6 +424,22 @@ export class TelegramRichDeliveryService {
       : {};
   }
 
+  private toTelegramUpload(fileIdOrUrl: string): InputFile | string {
+    const parsed = parseGeneratedImageDataUrl(fileIdOrUrl);
+    if (parsed) {
+      return new InputFile(
+        Buffer.from(parsed.base64, 'base64'),
+        `generated-image.${parsed.extension}`,
+      );
+    }
+
+    if (fileIdOrUrl.startsWith('data:image/')) {
+      throw new Error('Unsupported generated image data URL format');
+    }
+
+    return fileIdOrUrl;
+  }
+
   private async sleepForItem(item: SendItem): Promise<void> {
     const delay = calculateHumanDelayMs({
       textLength: (item.richMarkdown ?? item.plainText).length,
@@ -390,9 +447,10 @@ export class TelegramRichDeliveryService {
       random: this.timing.random,
     });
 
-    await (this.timing.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(
-      delay,
-    );
+    await (
+      this.timing.sleep ??
+      ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+    )(delay);
   }
 
   private errorMessage(error: unknown): string {

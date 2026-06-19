@@ -11,6 +11,7 @@ The name is inspired by Twitter/X’s Grok. "groknul" also playfully echoes the 
 - 🧠 **Long‑term memory**: Can store facts when a user explicitly says “remember …”
 - 🧩 **Hierarchical chat summaries**: Every 200 messages → a summary; 200 summaries → higher‑level summaries
 - 🖼️ **Image understanding**: Analyzes photos/documents and stores concise visual context
+- 🎨 **Image generation**: Can generate and send Telegram images when explicitly asked, with rare ambient meme images, when Codex OAuth is available
 - 🎙️ **Media context**: Transcribes voice/audio/video/circle videos locally with Whisper and samples video frames for visual context
 - 📝 **Full message persistence**: Saves all messages (text and media), with edit history
 - 🎭 **Reactions tracking**: Tracks emoji and custom emoji reactions with add/remove deltas
@@ -30,6 +31,7 @@ The name is inspired by Twitter/X’s Grok. "groknul" also playfully echoes the 
 - **AI (OpenRouter)**:
   - Reply: `openai/gpt-5.5`
   - Agent/router: `openai/gpt-5.5`
+  - Image generation: `openai/gpt-5.4-image-2`
   - Summarization & Vision: `openai/gpt-5.4-mini`
   - Optional Codex OAuth first for `openai/...` models, with OpenRouter fallback
   - Web search: self-hosted SearXNG
@@ -54,6 +56,15 @@ TELEGRAM_BOT_ADMIN_IDS=123456789,987654321               # comma-separated numer
 
 # OpenRouter AI Configuration
 OPENROUTER_API_KEY=sk_your_openrouter_api_key_here
+OPENROUTER_IMAGE_MODEL=openai/gpt-5.4-image-2               # optional
+TELEGRAM_BOT_AMBIENT_IMAGE_PROBABILITY=0.05                 # optional, after ambient gate passes
+
+# Optional Codex OAuth gate for image generation
+# If CODEX_ACCESS_TOKEN or cached ChatGPT tokens in ~/.codex/auth.json are unavailable,
+# the bot hides generate_image and skips ambient meme images.
+# For keyring-backed Codex login, provide CODEX_ACCESS_TOKEN or CODEX_AUTH_FILE.
+CODEX_ACCESS_TOKEN=your_codex_access_token_here              # optional
+CODEX_AUTH_FILE=/path/to/.codex/auth.json                    # optional, overrides ~/.codex/auth.json
 
 # Codex OAuth Configuration
 CODEX_OAUTH_AUTH_FILE=.data/codex-auth.json
