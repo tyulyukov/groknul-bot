@@ -101,7 +101,7 @@ test('CodexAiClient converts chat completion params to Codex Responses requests'
       content: Array<Record<string, string>>;
     }>;
     tools: Array<{ name: string; description: string; strict: boolean }>;
-    max_output_tokens: number;
+    max_output_tokens?: number;
     store: boolean;
     temperature?: number;
     top_p?: number;
@@ -118,7 +118,7 @@ test('CodexAiClient converts chat completion params to Codex Responses requests'
   assert.equal(body.tools[0]?.strict, false);
   assert.equal(body.temperature, undefined);
   assert.equal(body.top_p, undefined);
-  assert.equal(body.max_output_tokens, 100);
+  assert.equal(body.max_output_tokens, undefined);
 
   assert.equal(result.id, 'resp_test');
   assert.equal(result.choices[0]?.message.content, 'hello from codex');
