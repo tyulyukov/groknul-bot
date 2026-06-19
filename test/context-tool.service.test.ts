@@ -28,7 +28,17 @@ test('getMessagesBefore returns messages immediately before a trigger', async ()
               context: 'Image: screenshot context above the current message.',
               sentAt: new Date('2026-06-19T09:32:00.000Z'),
               edits: [],
-              reactions: [],
+              reactions: [
+                {
+                  userTelegramId: 1,
+                  emoji: '😁',
+                  addedAt: new Date('2026-06-19T09:33:00.000Z'),
+                },
+                {
+                  userTelegramId: 2,
+                  addedAt: new Date('2026-06-19T09:34:00.000Z'),
+                },
+              ],
               messageType: 'text',
               payload: {},
               createdAt: new Date('2026-06-19T09:32:00.000Z'),
@@ -79,7 +89,7 @@ test('getMessagesBefore returns messages immediately before a trigger', async ()
       context: 'Image: screenshot context above the current message.',
       sentAt: new Date('2026-06-19T09:32:00.000Z'),
       replyToMessageId: undefined,
-      reactions: [],
+      reactions: ['😁'],
     },
   ]);
 });

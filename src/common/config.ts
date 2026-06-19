@@ -1,4 +1,11 @@
 import dotenv from 'dotenv';
+import path from 'node:path';
+import {
+  DEFAULT_MEDIA_MAX_TRANSCRIPT_CHARS,
+  MAX_VIDEO_CONTEXT_FRAMES,
+  normalizeMediaTextLimit,
+  normalizeVideoContextFrameLimit,
+} from './media-context.js';
 
 dotenv.config();
 
@@ -46,6 +53,19 @@ export interface Config {
       maxChars: number;
       maxResults: number;
     };
+  };
+  media: {
+    tempDir: string;
+    maxVideoFrames: number;
+    maxTranscriptChars: number;
+    downloadTimeoutMs: number;
+    whisperPythonPath: string;
+    whisperScriptPath: string;
+    whisperModel: string;
+    whisperTimeoutMs: number;
+    ffmpegPath: string;
+    ffprobePath: string;
+    ffmpegTimeoutMs: number;
   };
   mongodb: {
     uri: string;
@@ -97,7 +117,11 @@ export const createConfig = (env: EnvSource): Config => ({
     mode: parseTelegramMode(env.TELEGRAM_BOT_MODE),
     webhookUrl: env.TELEGRAM_BOT_WEBHOOK_URL,
     webhookSecret: env.TELEGRAM_BOT_WEBHOOK_SECRET,
-    webhookTimeoutMs: parseInteger(env, 'TELEGRAM_BOT_WEBHOOK_TIMEOUT_MS', 9_000),
+    webhookTimeoutMs: parseInteger(
+      env,
+      'TELEGRAM_BOT_WEBHOOK_TIMEOUT_MS',
+      9_000,
+    ),
     serverHost: env.TELEGRAM_BOT_SERVER_HOST || '0.0.0.0',
     serverPort: parseInteger(env, 'TELEGRAM_BOT_SERVER_PORT', 3000),
     adminIds: (env.TELEGRAM_BOT_ADMIN_IDS || '')
@@ -107,8 +131,13 @@ export const createConfig = (env: EnvSource): Config => ({
       .map((v) => Number(v))
       .filter((v) => Number.isFinite(v)),
     ambient: {
-      enabled: String(env.TELEGRAM_BOT_AMBIENT_ENABLED).toLowerCase() === 'true',
-      probability: parseFloatValue(env, 'TELEGRAM_BOT_AMBIENT_PROBABILITY', 0.03),
+      enabled:
+        String(env.TELEGRAM_BOT_AMBIENT_ENABLED).toLowerCase() === 'true',
+      probability: parseFloatValue(
+        env,
+        'TELEGRAM_BOT_AMBIENT_PROBABILITY',
+        0.03,
+      ),
       minCooldownSec: parseInteger(
         env,
         'TELEGRAM_BOT_AMBIENT_MIN_COOLDOWN_SEC',
@@ -152,6 +181,30 @@ export const createConfig = (env: EnvSource): Config => ({
       maxChars: parseInteger(env, 'AGENT_CONTEXT_MAX_CHARS', 24_000),
       maxResults: parseInteger(env, 'AGENT_CONTEXT_MAX_RESULTS', 30),
     },
+  },
+  media: {
+    tempDir: env.MEDIA_TEMP_DIR || '/tmp/groknul-bot-media',
+    maxVideoFrames: normalizeVideoContextFrameLimit(
+      parseInteger(env, 'MEDIA_MAX_VIDEO_FRAMES', MAX_VIDEO_CONTEXT_FRAMES),
+    ),
+    maxTranscriptChars: normalizeMediaTextLimit(
+      parseInteger(
+        env,
+        'MEDIA_MAX_TRANSCRIPT_CHARS',
+        DEFAULT_MEDIA_MAX_TRANSCRIPT_CHARS,
+      ),
+    ),
+    downloadTimeoutMs: parseInteger(env, 'MEDIA_DOWNLOAD_TIMEOUT_MS', 60_000),
+    whisperPythonPath:
+      env.WHISPER_PYTHON_PATH || '/opt/whisper-venv/bin/python',
+    whisperScriptPath:
+      env.WHISPER_SCRIPT_PATH ||
+      path.join(process.cwd(), 'scripts', 'transcribe-media.py'),
+    whisperModel: env.WHISPER_MODEL || 'base',
+    whisperTimeoutMs: parseInteger(env, 'WHISPER_TIMEOUT_MS', 120_000),
+    ffmpegPath: env.FFMPEG_PATH || 'ffmpeg',
+    ffprobePath: env.FFPROBE_PATH || 'ffprobe',
+    ffmpegTimeoutMs: parseInteger(env, 'FFMPEG_TIMEOUT_MS', 60_000),
   },
   mongodb: {
     uri: getRequiredEnvVar(env, 'MONGODB_URI'),

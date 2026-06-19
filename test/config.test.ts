@@ -46,3 +46,36 @@ test('createConfig allows overriding Telegram webhook timeout', () => {
 
   assert.equal(config.telegram.webhookTimeoutMs, 5_000);
 });
+
+test('createConfig loads local media processing settings', () => {
+  const config = createConfig({
+    ...requiredEnv,
+    MEDIA_MAX_VIDEO_FRAMES: '6',
+    MEDIA_MAX_TRANSCRIPT_CHARS: '1200',
+    MEDIA_DOWNLOAD_TIMEOUT_MS: '15000',
+    WHISPER_MODEL: 'small',
+    WHISPER_TIMEOUT_MS: '90000',
+    FFMPEG_TIMEOUT_MS: '30000',
+  });
+
+  assert.equal(config.media.maxVideoFrames, 6);
+  assert.equal(config.media.maxTranscriptChars, 1_200);
+  assert.equal(config.media.downloadTimeoutMs, 15_000);
+  assert.equal(config.media.whisperModel, 'small');
+  assert.equal(config.media.whisperTimeoutMs, 90_000);
+  assert.equal(config.media.ffmpegTimeoutMs, 30_000);
+  assert.equal(config.media.whisperPythonPath, '/opt/whisper-venv/bin/python');
+  assert.equal(
+    config.media.whisperScriptPath,
+    `${process.cwd()}/scripts/transcribe-media.py`,
+  );
+});
+
+test('createConfig caps local media frame extraction at the hard maximum', () => {
+  const config = createConfig({
+    ...requiredEnv,
+    MEDIA_MAX_VIDEO_FRAMES: '99',
+  });
+
+  assert.equal(config.media.maxVideoFrames, 10);
+});

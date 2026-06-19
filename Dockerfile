@@ -6,8 +6,10 @@ RUN apt-get update \
     build-essential \
     ca-certificates \
     curl \
+    ffmpeg \
     git \
     libffi-dev \
+    libgomp1 \
     libssl-dev \
     libxslt1-dev \
     python-is-python3 \
@@ -24,6 +26,17 @@ RUN git clone --depth 1 https://github.com/searxng/searxng.git /opt/searxng \
   && /opt/searxng-venv/bin/pip install -U pyyaml msgspec typing-extensions pybind11 \
   && cd /opt/searxng \
   && /opt/searxng-venv/bin/pip install --use-pep517 --no-build-isolation -e .
+
+ENV HF_HOME=/opt/whisper-cache
+ENV WHISPER_MODEL=base
+ENV WHISPER_DEVICE=cpu
+ENV WHISPER_COMPUTE_TYPE=int8
+ENV WHISPER_PYTHON_PATH=/opt/whisper-venv/bin/python
+
+RUN python3 -m venv /opt/whisper-venv \
+  && /opt/whisper-venv/bin/pip install -U pip setuptools wheel \
+  && /opt/whisper-venv/bin/pip install --no-cache-dir faster-whisper \
+  && /opt/whisper-venv/bin/python -c "import os; from faster_whisper import WhisperModel; WhisperModel(os.environ.get('WHISPER_MODEL', 'base'), device=os.environ.get('WHISPER_DEVICE', 'cpu'), compute_type=os.environ.get('WHISPER_COMPUTE_TYPE', 'int8'))"
 
 WORKDIR /app
 COPY package*.json ./

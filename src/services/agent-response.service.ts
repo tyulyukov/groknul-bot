@@ -62,22 +62,20 @@ export const extractReplyContextMessages = (
 
   const messages = result.messages
     .map((message) => {
-      if (!message || typeof message !== 'object') return null;
-      const raw = message as Record<string, unknown>;
-      const id = typeof raw.id === 'number' ? raw.id : undefined;
+      const id = typeof message.id === 'number' ? message.id : undefined;
       if (typeof id !== 'number') return null;
 
       const normalized: AgentReplyContextMessage = { id };
-      const from = stringField(raw.from);
-      const userTelegramId = numberField(raw.userTelegramId);
-      const text = stringField(raw.text, 1_000);
-      const context = stringField(raw.context, 1_000);
-      const fileName = stringField(raw.fileName);
-      const messageType = stringField(raw.messageType);
-      const sentAt = dateField(raw.sentAt);
-      const replyToMessageId = numberField(raw.replyToMessageId);
-      const replyQuoteText = stringField(raw.replyQuoteText, 1_000);
-      const reactions = stringArrayField(raw.reactions);
+      const from = stringField(message.from);
+      const userTelegramId = numberField(message.userTelegramId);
+      const text = stringField(message.text, 1_000);
+      const context = stringField(message.context, 1_000);
+      const fileName = stringField(message.fileName);
+      const messageType = stringField(message.messageType);
+      const sentAt = dateField(message.sentAt);
+      const replyToMessageId = numberField(message.replyToMessageId);
+      const replyQuoteText = stringField(message.replyQuoteText, 1_000);
+      const reactions = stringArrayField(message.reactions);
 
       if (from) normalized.from = from;
       if (typeof userTelegramId === 'number') {
@@ -110,9 +108,10 @@ export const extractCurrentMessageDetails = (
   if (typeof id !== 'number') return undefined;
 
   const normalized: AgentReplyContextMessage = { id };
-  const user = raw.user && typeof raw.user === 'object'
-    ? (raw.user as Record<string, unknown>)
-    : undefined;
+  const user =
+    raw.user && typeof raw.user === 'object'
+      ? (raw.user as Record<string, unknown>)
+      : undefined;
   const from =
     stringField(user?.username) ??
     stringField(user?.firstName) ??
@@ -139,7 +138,8 @@ export const extractCurrentMessageDetails = (
     : [];
 
   if (from) normalized.from = from;
-  if (typeof userTelegramId === 'number') normalized.userTelegramId = userTelegramId;
+  if (typeof userTelegramId === 'number')
+    normalized.userTelegramId = userTelegramId;
   if (text) normalized.text = text;
   if (context) normalized.context = context;
   if (fileName) normalized.fileName = fileName;
@@ -303,7 +303,11 @@ export class AgentResponseService {
       );
       const replyContext = extractReplyContextMessages(result);
       logger.info(
-        { chatTelegramId, triggerMessageId, replyContextCount: replyContext.length },
+        {
+          chatTelegramId,
+          triggerMessageId,
+          replyContextCount: replyContext.length,
+        },
         'Loaded reply context for agent context',
       );
       return replyContext;

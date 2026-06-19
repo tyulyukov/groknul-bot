@@ -52,12 +52,26 @@ export class AiService {
     return summary;
   }
 
-  async analyzeImage(imageBase64DataUrl: string): Promise<string> {
+  async analyzeImages(
+    imageBase64DataUrls: string[],
+    prompt: string,
+  ): Promise<string> {
     try {
       logger.info(
-        { contentTypePrefix: imageBase64DataUrl.slice(0, 30) },
+        {
+          imagesCount: imageBase64DataUrls.length,
+          contentTypePrefix: imageBase64DataUrls[0]?.slice(0, 30),
+        },
         'Starting image summarization',
       );
+
+      const userContent: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
+        { type: 'text', text: prompt },
+        ...imageBase64DataUrls.map((url) => ({
+          type: 'image_url' as const,
+          image_url: { url },
+        })),
+      ];
 
       const completion = await this.aiClient.completeRaw({
         model: config.openRouter.models.vision,
@@ -67,13 +81,11 @@ export class AiService {
           {
             role: 'system',
             content:
-              'Provide a full, detailed description of the image. Describe the overall scene, key objects, their attributes, spatial relationships, actions, interactions, environment, layout, lighting, mood, style, logos, UI elements, and relevant chat context. Transcribe clearly visible text verbatim. Be precise and avoid speculation.',
+              'You analyze Telegram media for chat context. Be precise, concise, visually grounded, and useful for a later conversational reply. Transcribe visible text verbatim when readable. Avoid speculation.',
           },
           {
             role: 'user',
-            content: [
-              { type: 'image_url', image_url: { url: imageBase64DataUrl } },
-            ],
+            content: userContent,
           },
         ],
         temperature: 0.2,
@@ -238,11 +250,14 @@ export class AiService {
       return { role, content };
     };
 
-    const chronologicalBase = [...messages].reverse().map(convertToOpenAIMessage);
+    const chronologicalBase = [...messages]
+      .reverse()
+      .map(convertToOpenAIMessage);
 
     return chronologicalBase.map((message, idx) => {
       const labelNumber = chronologicalBase.length - idx;
-      const content = typeof message.content === 'string' ? message.content : '';
+      const content =
+        typeof message.content === 'string' ? message.content : '';
       return { ...message, content: `${labelNumber}:\n${content}` };
     });
   }

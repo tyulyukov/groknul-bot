@@ -12,10 +12,24 @@ export interface ContextToolLimits {
   maxResults: number;
 }
 
+export interface ContextToolMessageResult {
+  id: number;
+  from: string;
+  userTelegramId?: number;
+  text?: string;
+  context?: string;
+  fileName?: string;
+  messageType?: PopulatedMessage['messageType'];
+  sentAt?: Date;
+  replyToMessageId?: number;
+  replyQuoteText?: string;
+  reactions?: string[];
+}
+
 export type ContextToolResult =
   | {
       status: 'ok';
-      messages?: unknown[];
+      messages?: ContextToolMessageResult[];
       memories?: unknown[];
       summaries?: unknown[];
       digest?: string;
@@ -43,10 +57,7 @@ interface MinimalDatabase {
     MemoryModel,
     'searchByChat' | 'addMemory' | 'deleteById' | 'listByChat'
   >;
-  getSummaryModel(): Pick<
-    SummaryModel,
-    'getByLevelAscending' | 'getCount'
-  >;
+  getSummaryModel(): Pick<SummaryModel, 'getByLevelAscending' | 'getCount'>;
 }
 
 interface Summarizer {
@@ -64,7 +75,10 @@ export class ContextToolService {
     chatTelegramId: number,
     input: { limit: number; sinceMinutes?: number },
   ): Promise<ContextToolResult> {
-    const requestedLimit = this.normalizeLimit(input.limit, this.limits.maxMessages + 1);
+    const requestedLimit = this.normalizeLimit(
+      input.limit,
+      this.limits.maxMessages + 1,
+    );
     const limitCheck = this.checkLimit(requestedLimit, {
       limit: this.limits.maxMessages,
       sinceMinutes: input.sinceMinutes,
@@ -91,14 +105,18 @@ export class ContextToolService {
     input: { messageId: number; limit?: number },
   ): Promise<ContextToolResult> {
     const limit = this.normalizeLimit(input.limit, 10);
-    const limitCheck = this.checkLimit(limit, { limit: this.limits.maxMessages });
+    const limitCheck = this.checkLimit(limit, {
+      limit: this.limits.maxMessages,
+    });
     if (limitCheck) return limitCheck;
 
     const messages = await this.database
       .getMessageModel()
       .getMessagesBefore(chatTelegramId, input.messageId, limit);
 
-    return messages.length > 0 ? this.messagesResult(messages) : { status: 'not_found' };
+    return messages.length > 0
+      ? this.messagesResult(messages)
+      : { status: 'not_found' };
   }
 
   async searchMessages(
@@ -112,7 +130,9 @@ export class ContextToolService {
     },
   ): Promise<ContextToolResult> {
     const limit = this.normalizeLimit(input.limit, this.limits.maxResults);
-    const limitCheck = this.checkLimit(limit, { limit: this.limits.maxResults });
+    const limitCheck = this.checkLimit(limit, {
+      limit: this.limits.maxResults,
+    });
     if (limitCheck) return limitCheck;
 
     const since = this.parseDate(input.since);
@@ -134,7 +154,9 @@ export class ContextToolService {
     input: { messageId: number; limit?: number },
   ): Promise<ContextToolResult> {
     const limit = this.normalizeLimit(input.limit, 20);
-    const limitCheck = this.checkLimit(limit, { limit: this.limits.maxMessages });
+    const limitCheck = this.checkLimit(limit, {
+      limit: this.limits.maxMessages,
+    });
     if (limitCheck) return limitCheck;
 
     const messages: PopulatedMessage[] = [];
@@ -148,7 +170,9 @@ export class ContextToolService {
       currentId = message.replyToMessageTelegramId;
     }
 
-    return messages.length > 0 ? this.messagesResult(messages) : { status: 'not_found' };
+    return messages.length > 0
+      ? this.messagesResult(messages)
+      : { status: 'not_found' };
   }
 
   async summarizeMessages(
@@ -166,7 +190,9 @@ export class ContextToolService {
     const ids = input.messageIds ?? [];
     const limit =
       ids.length > 0 ? ids.length : this.normalizeLimit(input.range?.limit, 20);
-    const limitCheck = this.checkLimit(limit, { limit: this.limits.maxMessages });
+    const limitCheck = this.checkLimit(limit, {
+      limit: this.limits.maxMessages,
+    });
     if (limitCheck) return limitCheck;
 
     const messages =
@@ -302,7 +328,9 @@ export class ContextToolService {
     input: { query?: string; limit?: number },
   ): Promise<ContextToolResult> {
     const limit = this.normalizeLimit(input.limit, this.limits.maxResults);
-    const limitCheck = this.checkLimit(limit, { limit: this.limits.maxResults });
+    const limitCheck = this.checkLimit(limit, {
+      limit: this.limits.maxResults,
+    });
     if (limitCheck) return limitCheck;
 
     const memories = await this.database
@@ -378,7 +406,10 @@ export class ContextToolService {
 
   private messagesResult(messages: PopulatedMessage[]): ContextToolResult {
     const formatted = messages.map((message) => this.formatMessage(message));
-    const totalChars = formatted.reduce((sum, message) => sum + message.length, 0);
+    const totalChars = formatted.reduce(
+      (sum, message) => sum + message.length,
+      0,
+    );
 
     if (totalChars > this.limits.maxChars) {
       return {
@@ -391,23 +422,36 @@ export class ContextToolService {
 
     return {
       status: 'ok',
-      messages: messages.map((message) => ({
-        id: message.telegramId,
-        from: message.user?.username ?? message.user?.firstName ?? 'unknown',
-        userTelegramId: message.userTelegramId,
-        text: message.text,
-        context: message.context,
-        sentAt: message.sentAt,
-        replyToMessageId: message.replyToMessageTelegramId,
-        reactions: message.reactions?.map(
-          (reaction) => reaction.emoji ?? reaction.customEmojiId,
-        ),
-      })),
+      messages: messages.map((message) => {
+        const reactions = message.reactions
+          ?.map((reaction) => reaction.emoji ?? reaction.customEmojiId)
+          .filter((reaction): reaction is string => !!reaction);
+        const result: ContextToolMessageResult = {
+          id: message.telegramId,
+          from: message.user?.username ?? message.user?.firstName ?? 'unknown',
+          userTelegramId: message.userTelegramId,
+          text: message.text,
+          context: message.context,
+          sentAt: message.sentAt,
+          replyToMessageId: message.replyToMessageTelegramId,
+        };
+
+        if (message.fileName) result.fileName = message.fileName;
+        if (message.messageType && message.messageType !== 'text') {
+          result.messageType = message.messageType;
+        }
+        if (message.replyQuoteText)
+          result.replyQuoteText = message.replyQuoteText;
+        if (reactions?.length) result.reactions = reactions;
+
+        return result;
+      }),
     };
   }
 
   private formatMessage(message: PopulatedMessage): string {
-    const author = message.user?.username ?? message.user?.firstName ?? 'unknown';
+    const author =
+      message.user?.username ?? message.user?.firstName ?? 'unknown';
     return `${message.sentAt.toISOString()} | ${author}: ${
       message.text ?? '[non-text content]'
     }${message.context ? `\nContext: ${message.context}` : ''}`;

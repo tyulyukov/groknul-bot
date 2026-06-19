@@ -2,6 +2,7 @@ import { Bot, Context, GrammyError, HttpError, session } from 'grammy';
 import { autoRetry } from '@grammyjs/auto-retry';
 import { hydrate, HydrateFlavor } from '@grammyjs/hydrate';
 import { parseMode } from '@grammyjs/parse-mode';
+import { run, sequentialize, type RunnerHandle } from '@grammyjs/runner';
 import { MongoDBAdapter } from '@grammyjs/storage-mongodb';
 import { apiThrottler } from '@grammyjs/transformer-throttler';
 import { config } from '../common/config.js';
@@ -9,10 +10,7 @@ import logger from '../common/logger.js';
 import { database } from '../database/index.js';
 import { AiService } from './ai.service.js';
 import { databaseConnection } from '../database/connection.js';
-import {
-  MessageOriginUser,
-  Message as TelegramMessage,
-} from 'grammy/types';
+import { MessageOriginUser, Message as TelegramMessage } from 'grammy/types';
 import { MessageReaction } from '../database/models/Message.js';
 import { API_CONSTANTS } from 'grammy';
 import { markdownToTelegramHtml } from '../utils/markdown-to-telegram-html.js';
@@ -27,6 +25,11 @@ import {
   buildTelegramPollContext,
   deriveTelegramMessageContent,
 } from './message-ingestion.service.js';
+import {
+  MediaContextService,
+  selectTelegramMedia,
+} from './media-context.service.js';
+import { LocalMediaProcessor } from './local-media-processor.service.js';
 
 interface SessionData {
   messageCount: number;
@@ -36,12 +39,37 @@ interface SessionData {
 
 type MyContext = HydrateFlavor<Context & { session: SessionData }>;
 
+export const mergeMessageContexts = (
+  existing: string | undefined,
+  incoming: string | undefined,
+): string | undefined => {
+  const parts = [existing, incoming]
+    .map((part) => part?.trim())
+    .filter((part): part is string => !!part);
+
+  return parts.length > 0 ? parts.join('\n\n') : undefined;
+};
+
+export const hasAmbientTextOrMediaContext = (
+  message: TelegramMessage,
+  currentContext?: string,
+): boolean => {
+  const { text, messageType } = deriveTelegramMessageContent(message);
+  const messageText = text ?? '';
+  const isAmbientMedia = selectTelegramMedia(message) !== null;
+
+  if (isAmbientMedia) return !!currentContext?.trim();
+  return !!messageText && messageType === MESSAGE_TYPE.TEXT;
+};
+
 export class TelegramBotService {
   private readonly bot: Bot<MyContext>;
   private readonly aiClient: AiClient;
   private readonly aiService: AiService;
   private readonly contextToolService: ContextToolService;
   private readonly agentResponseService: AgentResponseService;
+  private readonly mediaContextService: MediaContextService;
+  private runnerHandle?: RunnerHandle;
   private botUsername: string = '';
 
   constructor() {
@@ -52,6 +80,14 @@ export class TelegramBotService {
       database,
       this.aiService,
       config.agent.context,
+    );
+    this.mediaContextService = new MediaContextService(
+      new LocalMediaProcessor(),
+      this.aiService,
+      {
+        maxVideoFrames: config.media.maxVideoFrames,
+        maxTranscriptChars: config.media.maxTranscriptChars,
+      },
     );
     this.agentResponseService = new AgentResponseService(
       this.aiClient,
@@ -71,6 +107,12 @@ export class TelegramBotService {
     this.bot.use(hydrate());
 
     this.bot.api.config.use(parseMode('HTML'));
+
+    this.bot.use(
+      sequentialize((ctx) =>
+        typeof ctx.chat?.id === 'number' ? String(ctx.chat.id) : undefined,
+      ),
+    );
 
     const adapter = new MongoDBAdapter({
       collection: databaseConnection.getDb().collection('sessions'),
@@ -341,7 +383,9 @@ export class TelegramBotService {
         const label = `${n}..${n - 1 >= 1 ? n - 1 : 1}`;
         const user =
           msg.user?.username || `${msg.user?.firstName || 'Unknown'}`;
-        const text = msg.text || '[non-text content]';
+        const text = [msg.text || '[non-text content]', msg.context?.trim()]
+          .filter(Boolean)
+          .join('\nContext: ');
         const ts = new Date(msg.sentAt).toISOString();
         return `${label} | ${ts} | ${user}: ${text}`;
       });
@@ -481,115 +525,40 @@ export class TelegramBotService {
       payload: JSON.parse(JSON.stringify(ctx)),
     });
 
-    // Trigger background summarization maintenance
-    this.ensureSummaries(ctx.chat!.id).catch((error) =>
-      logger.error(
-        { error, chatId: ctx.chat!.id },
-        'Failed to maintain summaries',
-      ),
-    );
+    let storedContext = extraContext;
 
-    // If message contains a photo (or a document that is a photo), analyze it and store concise context
     try {
-      const shouldAnalyzePhoto =
-        !!message.photo ||
-        (message.document && message.document.mime_type?.startsWith('image/'));
-      if (shouldAnalyzePhoto) {
+      const mediaContext = await this.mediaContextService.buildContext(
+        message,
+        ctx.api,
+      );
+      storedContext = mergeMessageContexts(extraContext, mediaContext);
+
+      if (storedContext && storedContext !== extraContext) {
+        await messageModel.updateMessageContext(
+          message.message_id,
+          ctx.chat.id,
+          storedContext,
+        );
         logger.info(
           {
             chatId: ctx.chat.id,
             messageId: message.message_id,
-            hasPhoto: !!message.photo,
-            hasImageDocument:
-              !!message.document &&
-              !!message.document.mime_type?.startsWith('image/'),
+            contextLength: storedContext.length,
           },
-          'Image content detected; starting summarization',
+          'Stored Telegram media context in DB',
         );
-        // pick only one image: for photo use the largest size; for document use its file_id
-        let selectedFileId: string | null = null;
-        if (message.photo && message.photo.length > 0) {
-          const largestPhoto = message.photo[message.photo.length - 1];
-          selectedFileId = largestPhoto.file_id;
-        } else if (
-          message.document &&
-          message.document.mime_type?.startsWith('image/')
-        ) {
-          selectedFileId = message.document.file_id;
-        }
-
-        if (selectedFileId) {
-          try {
-            const file = await ctx.api.getFile(selectedFileId);
-            if (file.file_path) {
-              const url = `https://api.telegram.org/file/bot${config.telegram.apiKey}/${file.file_path}`;
-              // Determine MIME type based on Telegram metadata: documents have mime_type; photos default to JPEG
-              const mimeType = message.document?.mime_type?.startsWith('image/')
-                ? message.document.mime_type
-                : 'image/jpeg';
-
-              // Download the image and convert to base64 data URL
-              logger.info(
-                {
-                  chatId: ctx.chat.id,
-                  messageId: message.message_id,
-                  filePath: file.file_path,
-                  mimeType,
-                },
-                'Downloading image for analysis',
-              );
-              const resp = await fetch(url);
-              if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-              const arrayBuffer = await resp.arrayBuffer();
-              const base64 = Buffer.from(arrayBuffer).toString('base64');
-              const dataUrl = `data:${mimeType};base64,${base64}`;
-
-              logger.info(
-                {
-                  chatId: ctx.chat.id,
-                  messageId: message.message_id,
-                  imageBytes: base64.length * 0.75, // rough bytes estimation
-                  base64Length: base64.length,
-                },
-                'Image downloaded and encoded; invoking vision model',
-              );
-              const contextSummary = await this.aiService.analyzeImage(dataUrl);
-              logger.info(
-                {
-                  chatId: ctx.chat.id,
-                  messageId: message.message_id,
-                  summaryPresent: !!contextSummary,
-                  summaryLength: contextSummary?.length || 0,
-                  summaryPreview: contextSummary?.slice(0, 200),
-                },
-                'Vision model returned summary',
-              );
-              if (contextSummary && contextSummary.trim().length > 0) {
-                await messageModel.updateMessageContext(
-                  message.message_id,
-                  ctx.chat.id,
-                  contextSummary.trim(),
-                );
-                logger.info(
-                  {
-                    chatId: ctx.chat.id,
-                    messageId: message.message_id,
-                  },
-                  'Stored image context summary in DB',
-                );
-              }
-            }
-          } catch (error) {
-            logger.error(
-              { error, selectedFileId },
-              'Failed to analyze selected Telegram image',
-            );
-          }
-        }
       }
     } catch (error) {
-      logger.error(error, 'Failed to analyze image and store context');
+      logger.error(error, 'Failed to build and store Telegram media context');
     }
+
+    const chatId = ctx.chat.id;
+
+    // Trigger background summarization maintenance after final message context is persisted.
+    this.ensureSummaries(chatId).catch((error) =>
+      logger.error({ error, chatId }, 'Failed to maintain summaries'),
+    );
 
     if (this.shouldRespond(message, ctx.from.id)) {
       await this.generateAndSendResponse(ctx, message);
@@ -597,7 +566,7 @@ export class TelegramBotService {
     }
 
     // Try ambient interjection (non-mention, non-reply) with strong gating
-    await this.maybeAmbientInterject(ctx, message).catch((e) =>
+    await this.maybeAmbientInterject(ctx, message, storedContext).catch((e) =>
       logger.error(e, 'Ambient interjection failed'),
     );
   }
@@ -723,18 +692,25 @@ export class TelegramBotService {
     );
   }
 
-  private shouldTryAmbient(ctx: MyContext, message: TelegramMessage): boolean {
+  private shouldTryAmbient(
+    ctx: MyContext,
+    message: TelegramMessage,
+    currentContext?: string,
+  ): boolean {
     const cfg = config.telegram.ambient;
     if (!cfg.enabled) return false;
 
     if (message.from?.id === this.bot.botInfo.id) return false;
 
-    const { text, messageType } = deriveTelegramMessageContent(message);
-    if (!text || messageType !== MESSAGE_TYPE.TEXT) return false;
+    const { text } = deriveTelegramMessageContent(message);
+    const messageText = text ?? '';
+
+    if (!hasAmbientTextOrMediaContext(message, currentContext)) return false;
 
     // Skip if directly mentions or replies to the bot (handled elsewhere)
-    if (text.includes(`@${this.botUsername}`)) return false;
-    if (message.reply_to_message?.from?.id === this.bot.botInfo.id) return false;
+    if (messageText.includes(`@${this.botUsername}`)) return false;
+    if (message.reply_to_message?.from?.id === this.bot.botInfo.id)
+      return false;
 
     // Cooldowns
     const now = Date.now();
@@ -773,8 +749,9 @@ export class TelegramBotService {
   private async maybeAmbientInterject(
     ctx: MyContext,
     triggerMessage: TelegramMessage,
+    currentContext?: string,
   ): Promise<void> {
-    if (!this.shouldTryAmbient(ctx, triggerMessage)) return;
+    if (!this.shouldTryAmbient(ctx, triggerMessage, currentContext)) return;
 
     const chatId = ctx.chat!.id;
     const messageModel = database.getMessageModel();
@@ -787,7 +764,9 @@ export class TelegramBotService {
     );
     const maxAgeMin = config.telegram.ambient.maxContextAgeMinutes;
     const cutoff = Date.now() - maxAgeMin * 60 * 1000;
-    const recentFresh = recent.filter((m) => new Date(m.sentAt).getTime() >= cutoff);
+    const recentFresh = recent.filter(
+      (m) => new Date(m.sentAt).getTime() >= cutoff,
+    );
     const context = recentFresh.length > 0 ? recentFresh : recent.slice(0, 30);
     logger.info(
       {
@@ -808,7 +787,10 @@ export class TelegramBotService {
     );
 
     if (!ambient) {
-      logger.info({ chatId, triggerId: triggerMessage.message_id }, 'Ambient: model abstained');
+      logger.info(
+        { chatId, triggerId: triggerMessage.message_id },
+        'Ambient: model abstained',
+      );
       return;
     }
 
@@ -913,8 +895,12 @@ export class TelegramBotService {
     } else {
       logger.info('Starting bot in polling mode');
 
-      await this.bot.start({
-        allowed_updates: API_CONSTANTS.ALL_UPDATE_TYPES,
+      this.runnerHandle = run(this.bot, {
+        runner: {
+          fetch: {
+            allowed_updates: API_CONSTANTS.ALL_UPDATE_TYPES,
+          },
+        },
       });
     }
   }
@@ -923,7 +909,12 @@ export class TelegramBotService {
     logger.info('Stopping Telegram bot service');
 
     if (config.telegram.mode === 'polling') {
-      this.bot.stop();
+      if (this.runnerHandle) {
+        await this.runnerHandle.stop();
+        this.runnerHandle = undefined;
+      } else {
+        this.bot.stop();
+      }
     }
   }
 
