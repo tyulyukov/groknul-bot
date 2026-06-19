@@ -105,3 +105,152 @@ test('getChatDigest reads highest-level summaries before recent level-0 summarie
   assert.match(result.digest ?? '', /high-level old digest/);
   assert.match(result.digest ?? '', /recent level zero/);
 });
+
+test('getChatSummaries returns the last matching stored summaries', async () => {
+  const service = new ContextToolService(
+    {
+      getMessageModel: () => ({
+        getRecentMessages: async () => [],
+        searchMessages: async () => [],
+        findByMessageTelegramId: async () => null,
+        countMessages: async () => 0,
+      }),
+      getMemoryModel: () => ({
+        searchByChat: async () => [],
+        addMemory: async () => {
+          throw new Error('unused');
+        },
+        deleteById: async () => false,
+        listByChat: async () => [],
+      }),
+      getSummaryModel: () => ({
+        getCount: async () => 2,
+        getByLevelAscending: async () => [
+          {
+            chatTelegramId: -100,
+            level: 0,
+            index: 0,
+            summary: 'older',
+            startSentAt: new Date('2026-06-18T00:00:00.000Z'),
+            endSentAt: new Date('2026-06-18T01:00:00.000Z'),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+          {
+            chatTelegramId: -100,
+            level: 0,
+            index: 1,
+            summary: 'newer',
+            startSentAt: new Date('2026-06-19T00:00:00.000Z'),
+            endSentAt: new Date('2026-06-19T01:00:00.000Z'),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ],
+      }),
+    },
+    {
+      summarizeText: async () => 'summary',
+    },
+    {
+      maxMessages: 50,
+      maxChars: 10_000,
+      maxResults: 20,
+    },
+  );
+
+  const result = await service.getChatSummaries(-100, {
+    limit: 1,
+    since: '2026-06-18T12:00:00.000Z',
+  });
+
+  assert.equal(result.status, 'ok');
+  assert.deepEqual(result.summaries, [
+    {
+      level: 0,
+      index: 1,
+      summary: 'newer',
+      startSentAt: new Date('2026-06-19T00:00:00.000Z'),
+      endSentAt: new Date('2026-06-19T01:00:00.000Z'),
+    },
+  ]);
+});
+
+test('summarizeMessages can summarize a bounded message period', async () => {
+  let searchInput: unknown;
+  const service = new ContextToolService(
+    {
+      getMessageModel: () => ({
+        getRecentMessages: async () => {
+          throw new Error('unused');
+        },
+        searchMessages: async (input: unknown) => {
+          searchInput = input;
+          return [
+            {
+              telegramId: 101,
+              chatTelegramId: -100,
+              userTelegramId: 777,
+              user: {
+                telegramId: 777,
+                firstName: 'alice',
+                isBot: false,
+                history: [],
+                createdAt: new Date('2026-06-19T00:00:00.000Z'),
+                updatedAt: new Date('2026-06-19T00:00:00.000Z'),
+              },
+              text: 'period message',
+              sentAt: new Date('2026-06-19T00:30:00.000Z'),
+              edits: [],
+              reactions: [],
+              messageType: 'text',
+              payload: {},
+              createdAt: new Date('2026-06-19T00:30:00.000Z'),
+              updatedAt: new Date('2026-06-19T00:30:00.000Z'),
+            },
+          ];
+        },
+        findByMessageTelegramId: async () => null,
+        countMessages: async () => 0,
+      }),
+      getMemoryModel: () => ({
+        searchByChat: async () => [],
+        addMemory: async () => {
+          throw new Error('unused');
+        },
+        deleteById: async () => false,
+        listByChat: async () => [],
+      }),
+      getSummaryModel: () => ({
+        getByLevelAscending: async () => [],
+        getCount: async () => 0,
+      }),
+    },
+    {
+      summarizeText: async (blocks) => blocks.join('\n'),
+    },
+    {
+      maxMessages: 50,
+      maxChars: 10_000,
+      maxResults: 20,
+    },
+  );
+
+  const result = await service.summarizeMessages(-100, {
+    range: {
+      limit: 5,
+      since: '2026-06-19T00:00:00.000Z',
+      until: '2026-06-19T01:00:00.000Z',
+    },
+  });
+
+  assert.equal(result.status, 'ok');
+  assert.match(result.summary ?? '', /period message/);
+  assert.deepEqual(searchInput, {
+    chatTelegramId: -100,
+    since: new Date('2026-06-19T00:00:00.000Z'),
+    until: new Date('2026-06-19T01:00:00.000Z'),
+    fromUserTelegramId: undefined,
+    limit: 5,
+  });
+});

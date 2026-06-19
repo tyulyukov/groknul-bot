@@ -5,6 +5,7 @@ import type { SearxngSearchService } from './searxng-search.service.js';
 import {
   MAX_SEND_ITEMS,
   parseSendPayload,
+  type SendPayload,
   type TelegramRichDeliveryService,
 } from './telegram-rich-delivery.service.js';
 import { markdownToTelegramHtml } from '../utils/markdown-to-telegram-html.js';
@@ -67,10 +68,11 @@ export class TelegramToolRegistry implements AgentToolRegistry {
               required: ['plainText'],
             },
           },
+          continueAfter: { type: 'boolean' },
         },
         required: ['items'],
       }),
-      this.tool('get_recent_messages', 'Fetch recent raw chat messages.', {
+      this.tool('get_recent_messages', 'Fetch the last N raw chat messages, optionally only messages from the last sinceMinutes minutes. Use this for fresh context and vibe.', {
         type: 'object',
         properties: {
           limit: { type: 'number' },
@@ -78,7 +80,7 @@ export class TelegramToolRegistry implements AgentToolRegistry {
         },
         required: ['limit'],
       }),
-      this.tool('search_messages', 'Search persisted chat messages.', {
+      this.tool('search_messages', 'Fetch persisted chat messages by optional text query, date range, author, and limit. Query is optional; use since/until with limit to fetch messages from a period of time.', {
         type: 'object',
         properties: {
           query: { type: 'string' },
@@ -96,17 +98,34 @@ export class TelegramToolRegistry implements AgentToolRegistry {
         },
         required: ['messageId'],
       }),
-      this.tool('summarize_messages', 'Summarize selected messages or a recent range.', {
+      this.tool('summarize_messages', 'Summarize selected messages, the last N messages, or a bounded message period.', {
         type: 'object',
         properties: {
           messageIds: { type: 'array', items: { type: 'number' } },
-          range: { type: 'object' },
+          range: {
+            type: 'object',
+            properties: {
+              limit: { type: 'number' },
+              since: { type: 'string' },
+              until: { type: 'string' },
+              fromUser: { type: 'number' },
+            },
+          },
         },
       }),
       this.tool('get_chat_digest', 'Get broad stored chat digest.', {
         type: 'object',
         properties: { period: { type: 'string' } },
         required: ['period'],
+      }),
+      this.tool('get_chat_summaries', 'Fetch stored summary blocks by level, limit, and optional date range. Use level 0 for most recent message-block summaries; higher levels are broader/older digests.', {
+        type: 'object',
+        properties: {
+          level: { type: 'number' },
+          limit: { type: 'number' },
+          since: { type: 'string' },
+          until: { type: 'string' },
+        },
       }),
       this.tool('search_memories', 'Search chat memories.', {
         type: 'object',
@@ -205,6 +224,16 @@ export class TelegramToolRegistry implements AgentToolRegistry {
         return this.input.contextTools.getChatDigest(this.input.chatTelegramId, {
           period: this.stringArg(args.period) ?? 'recent',
         });
+      case 'get_chat_summaries':
+        return this.input.contextTools.getChatSummaries(
+          this.input.chatTelegramId,
+          {
+            level: this.optionalNumberArg(args.level),
+            limit: this.optionalNumberArg(args.limit),
+            since: this.stringArg(args.since),
+            until: this.stringArg(args.until),
+          },
+        );
       case 'search_memories':
         return this.input.contextTools.searchMemories(
           this.input.chatTelegramId,
@@ -264,7 +293,18 @@ export class TelegramToolRegistry implements AgentToolRegistry {
       };
     }
 
-    return this.input.delivery.send(this.input.chatTelegramId, payload);
+    return this.input.delivery.send(
+      this.input.chatTelegramId,
+      this.onlyFirstItemCanReply(payload),
+    );
+  }
+
+  private onlyFirstItemCanReply(payload: SendPayload): SendPayload {
+    return {
+      items: payload.items.map((item, index) =>
+        index === 0 ? item : { ...item, replyToMessageId: undefined },
+      ),
+    };
   }
 
   private async reactToMessage(args: Record<string, unknown>): Promise<unknown> {

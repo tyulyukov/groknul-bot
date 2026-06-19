@@ -62,7 +62,10 @@ test('AgentRunner stops after 10 tool calls', async () => {
 
   assert.equal(executed, 10);
   assert.equal(result.status, 'tool_limit_reached');
-  assert.equal(result.output.items[0]?.plainText, 'I need a narrower request to continue safely.');
+  assert.equal(
+    result.output.items[0]?.plainText,
+    'need a narrower request to keep this sane',
+  );
 });
 
 test('AgentRunner does not expose wrong-shape JSON as visible text', async () => {
@@ -181,6 +184,91 @@ test('AgentRunner does not mark invalid send tool payloads as sent', async () =>
 
   assert.equal(result.status, 'final');
   assert.equal(result.output.items[0]?.plainText, 'fallback text');
+});
+
+test('AgentRunner continues after progress send when requested', async () => {
+  let completions = 0;
+  const client: AgentChatClient = {
+    complete: async () => {
+      completions += 1;
+      if (completions === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            tool_calls: [
+              {
+                id: 'call_progress',
+                type: 'function',
+                function: {
+                  name: 'send',
+                  arguments:
+                    '{"continueAfter":true,"items":[{"plainText":"lemme check"}]}',
+                },
+              },
+            ],
+          },
+        };
+      }
+
+      if (completions === 2) {
+        return {
+          message: {
+            role: 'assistant',
+            tool_calls: [
+              {
+                id: 'call_search',
+                type: 'function',
+                function: {
+                  name: 'web_search',
+                  arguments: '{"query":"test"}',
+                },
+              },
+            ],
+          },
+        };
+      }
+
+      return {
+        message: {
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call_final',
+              type: 'function',
+              function: {
+                name: 'send',
+                arguments: '{"items":[{"plainText":"found it"}]}',
+              },
+            },
+          ],
+        },
+      };
+    },
+  };
+  const executedTools: string[] = [];
+  const registry: AgentToolRegistry = {
+    getToolDefinitions: () => [],
+    execute: async (name) => {
+      executedTools.push(name);
+      return name === 'send'
+        ? { status: 'ok', deliveries: [{ telegramId: executedTools.length }] }
+        : { status: 'ok', results: [] };
+    },
+  };
+  const runner = new AgentRunner(client, registry, {
+    model: 'agent-model',
+    maxToolCalls: 10,
+  });
+
+  const result = await runner.run({
+    chatTelegramId: -100,
+    triggerMessageId: 123,
+    botUsername: 'groknul_bot',
+  });
+
+  assert.equal(result.status, 'sent');
+  assert.deepEqual(executedTools, ['send', 'web_search', 'send']);
+  assert.deepEqual(result.toolsUsed, ['send', 'web_search', 'send']);
 });
 
 test('AgentRunner normalizes structured final output through the send payload schema', async () => {

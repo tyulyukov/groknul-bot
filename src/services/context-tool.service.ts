@@ -17,6 +17,7 @@ export type ContextToolResult =
       status: 'ok';
       messages?: unknown[];
       memories?: unknown[];
+      summaries?: unknown[];
       digest?: string;
       summary?: string;
       deleted?: boolean;
@@ -136,7 +137,15 @@ export class ContextToolService {
 
   async summarizeMessages(
     chatTelegramId: number,
-    input: { messageIds?: number[]; range?: { limit: number } },
+    input: {
+      messageIds?: number[];
+      range?: {
+        limit: number;
+        since?: string;
+        until?: string;
+        fromUser?: number;
+      };
+    },
   ): Promise<ContextToolResult> {
     const ids = input.messageIds ?? [];
     const limit =
@@ -155,9 +164,19 @@ export class ContextToolService {
               ),
             )
           ).filter((message): message is PopulatedMessage => Boolean(message))
-        : await this.database
-            .getMessageModel()
-            .getRecentMessages(chatTelegramId, input.range?.limit ?? 20);
+        : input.range?.since ||
+            input.range?.until ||
+            typeof input.range?.fromUser === 'number'
+          ? await this.database.getMessageModel().searchMessages({
+              chatTelegramId,
+              since: this.parseDate(input.range.since),
+              until: this.parseDate(input.range.until),
+              fromUserTelegramId: input.range.fromUser,
+              limit,
+            })
+          : await this.database
+              .getMessageModel()
+              .getRecentMessages(chatTelegramId, limit);
 
     const summary = await this.summarizer.summarizeText(
       messages.map((message) => this.formatMessage(message)),
@@ -165,6 +184,62 @@ export class ContextToolService {
     );
 
     return { status: 'ok', summary };
+  }
+
+  async getChatSummaries(
+    chatTelegramId: number,
+    input: {
+      level?: number;
+      limit?: number;
+      since?: string;
+      until?: string;
+    },
+  ): Promise<ContextToolResult> {
+    const limit = this.normalizeLimit(input.limit, this.limits.maxResults);
+    const level = this.normalizeLevel(input.level);
+    const limitCheck = this.checkLimit(limit, {
+      level,
+      limit: this.limits.maxResults,
+      since: input.since,
+      until: input.until,
+    });
+    if (limitCheck) return limitCheck;
+
+    const summaries = await this.database
+      .getSummaryModel()
+      .getByLevelAscending(chatTelegramId, level);
+    const since = this.parseDate(input.since);
+    const until = this.parseDate(input.until);
+    const filtered = summaries.filter((summary) => {
+      if (
+        since &&
+        summary.endSentAt &&
+        summary.endSentAt.getTime() < since.getTime()
+      ) {
+        return false;
+      }
+
+      if (
+        until &&
+        summary.startSentAt &&
+        summary.startSentAt.getTime() > until.getTime()
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+
+    return {
+      status: 'ok',
+      summaries: filtered.slice(-limit).map((summary) => ({
+        level: summary.level,
+        index: summary.index,
+        summary: summary.summary,
+        startSentAt: summary.startSentAt,
+        endSentAt: summary.endSentAt,
+      })),
+    };
   }
 
   async getChatDigest(
@@ -272,6 +347,11 @@ export class ContextToolService {
   private normalizeLimit(value: number | undefined, fallback: number): number {
     if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
     return Math.max(1, Math.floor(value));
+  }
+
+  private normalizeLevel(value: number | undefined): number {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+    return Math.max(0, Math.floor(value));
   }
 
   private parseDate(value: string | undefined): Date | undefined {

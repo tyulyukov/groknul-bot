@@ -70,6 +70,70 @@ test('send rejects empty or malformed item arrays before delivery', async () => 
   });
 });
 
+test('send strips reply metadata from follow-up bubbles', async () => {
+  let sentPayload: unknown;
+  const registry = new TelegramToolRegistry({
+    chatTelegramId: -100,
+    botUserTelegramId: 999,
+    api: {
+      deleteMessage: async () => true,
+      editMessageText: async () => true,
+      setMessageReaction: async () => true,
+    },
+    delivery: {
+      send: async (_chatId: number, payload: unknown) => {
+        sentPayload = payload;
+        return { status: 'ok', deliveries: [{ telegramId: 1 }] };
+      },
+    } as never,
+    contextTools: {} as never,
+    searchService: {} as never,
+    messageModel: {
+      findByMessageTelegramId: async () => null,
+    } as never,
+  });
+
+  await registry.execute('send', {
+    items: [
+      { plainText: 'one', replyToMessageId: 123 },
+      { plainText: 'two', replyToMessageId: 123 },
+      { plainText: 'three', replyToMessageId: 123 },
+    ],
+  });
+
+  assert.deepEqual(sentPayload, {
+    items: [
+      {
+        plainText: 'one',
+        richHtml: undefined,
+        richMarkdown: undefined,
+        replyToMessageId: 123,
+        attachments: undefined,
+        poll: undefined,
+        delayHintMs: undefined,
+      },
+      {
+        plainText: 'two',
+        richHtml: undefined,
+        richMarkdown: undefined,
+        replyToMessageId: undefined,
+        attachments: undefined,
+        poll: undefined,
+        delayHintMs: undefined,
+      },
+      {
+        plainText: 'three',
+        richHtml: undefined,
+        richMarkdown: undefined,
+        replyToMessageId: undefined,
+        attachments: undefined,
+        poll: undefined,
+        delayHintMs: undefined,
+      },
+    ],
+  });
+});
+
 test('react_to_message replaces the bot reaction locally after Telegram succeeds', async () => {
   const replaceCalls: unknown[] = [];
   const registry = new TelegramToolRegistry({
