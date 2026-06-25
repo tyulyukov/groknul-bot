@@ -173,6 +173,36 @@ export class TelegramToolRegistry implements AgentToolRegistry {
           },
         },
       ),
+      this.tool(
+        'get_raw_message',
+        'Fetch the bounded raw stored Telegram update payload for one message id in this chat. Use this when normalized context omits Telegram fields you need, such as poll internals or new message-type fields. This reads stored payloads only; it cannot fetch arbitrary Telegram history.',
+        {
+          type: 'object',
+          properties: {
+            messageId: { type: 'number' },
+          },
+          required: ['messageId'],
+        },
+      ),
+      this.tool(
+        'get_chat_stats',
+        'Compute exact accounting from stored messages in this chat, excluding this bot and its internal no-reply markers: total messages, messages per day, top posters, and peak hours. Use for questions like "how many messages today", "messages/day", "top flooders", and activity peaks. period defaults to today; timeZone defaults to Europe/Kiev. Results cover messages the bot has stored, not Telegram history it never received.',
+        {
+          type: 'object',
+          properties: {
+            period: {
+              type: 'string',
+              enum: ['today', 'yesterday', 'last24h', 'last7d', 'all'],
+            },
+            since: { type: 'string' },
+            until: { type: 'string' },
+            timeZone: { type: 'string' },
+            topUsersLimit: { type: 'number' },
+            topHoursLimit: { type: 'number' },
+            dayLimit: { type: 'number' },
+          },
+        },
+      ),
       this.tool('get_reply_thread', 'Follow the reply chain for a message.', {
         type: 'object',
         properties: {
@@ -323,6 +353,24 @@ export class TelegramToolRegistry implements AgentToolRegistry {
             limit: this.optionalNumberArg(args.limit),
           },
         );
+      case 'get_raw_message':
+        return this.input.contextTools.getRawMessage(
+          this.input.chatTelegramId,
+          {
+            messageId: this.numberArg(args.messageId, 0),
+          },
+        );
+      case 'get_chat_stats':
+        return this.input.contextTools.getChatStats(this.input.chatTelegramId, {
+          period: this.stringArg(args.period),
+          since: this.stringArg(args.since),
+          until: this.stringArg(args.until),
+          timeZone: this.stringArg(args.timeZone),
+          topUsersLimit: this.optionalNumberArg(args.topUsersLimit),
+          topHoursLimit: this.optionalNumberArg(args.topHoursLimit),
+          dayLimit: this.optionalNumberArg(args.dayLimit),
+          excludeUserTelegramId: this.input.botUserTelegramId,
+        });
       case 'get_reply_thread':
         return this.input.contextTools.getReplyThread(
           this.input.chatTelegramId,

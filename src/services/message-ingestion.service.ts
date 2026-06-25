@@ -1,4 +1,7 @@
-import type { Message as TelegramMessage, Poll as TelegramPoll } from 'grammy/types';
+import type {
+  Message as TelegramMessage,
+  Poll as TelegramPoll,
+} from 'grammy/types';
 import { MESSAGE_TYPE, type MessageType } from '../common/message-types.js';
 
 export interface DerivedTelegramMessageContent {
@@ -46,11 +49,21 @@ export const deriveTelegramMessageContent = (
 
 export const buildTelegramPollContext = (poll: TelegramPoll): string => {
   const lines: string[] = [];
-  const options = (poll.options || []).map((option) => option.text);
+  const options = poll.options || [];
   lines.push('Poll details:');
   lines.push(`• Question: ${poll.question}`);
-  lines.push(`• Options: ${options.join(' | ')}`);
-  lines.push(`• Multiple answers: ${poll.allows_multiple_answers ? 'yes' : 'no'}`);
+  lines.push(`• Options: ${options.map((option) => option.text).join(' | ')}`);
+  lines.push(`• Total votes: ${poll.total_voter_count}`);
+  lines.push('• Votes by option:');
+  for (const [index, option] of options.entries()) {
+    const voteLabel = option.voter_count === 1 ? 'vote' : 'votes';
+    lines.push(
+      `${index + 1}. ${option.text} - ${option.voter_count} ${voteLabel}`,
+    );
+  }
+  lines.push(
+    `• Multiple answers: ${poll.allows_multiple_answers ? 'yes' : 'no'}`,
+  );
   lines.push(`• Anonymous: ${poll.is_anonymous ? 'yes' : 'no'}`);
   lines.push(`• Type: ${poll.type}`);
   if (poll.correct_option_id !== undefined && poll.type === 'quiz') {

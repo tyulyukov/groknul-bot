@@ -14,6 +14,7 @@ The name is inspired by Twitter/X’s Grok. "groknul" also playfully echoes the 
 - 🎨 **Image generation**: Can generate and send Telegram images when explicitly asked, with rare ambient meme images, when Codex OAuth is available
 - 🎙️ **Media context**: Transcribes voice/audio/video/circle videos locally with Whisper and samples video frames for visual context
 - 📝 **Full message persistence**: Saves all messages (text and media), with edit history
+- 📊 **Stored chat statistics**: AI tools can count stored messages, messages/day, top posters, and peak activity hours
 - 🎭 **Reactions tracking**: Tracks emoji and custom emoji reactions with add/remove deltas
 - 👥 **User tracking**: Maintains user profiles and updates on changes
 - 🎯 **Smart triggering**: Responds only when mentioned (`@bot`) or when you reply to the bot
@@ -129,6 +130,7 @@ Admin‑only (run in private chat with the bot, users in `TELEGRAM_BOT_ADMIN_IDS
 - `/reply <dbMessageId> <text>` — Reply in a chat to a specific DB‑stored message
 
 Owner‑only Codex OAuth commands (private chat only, hard-gated to Telegram user `870452692`):
+
 - `/codex` or `/codex_status` — Show Codex OAuth connection status
 - `/codex_connect` — Start ChatGPT/Codex device-code login
 - `/codex_disconnect` — Remove stored Codex OAuth credentials

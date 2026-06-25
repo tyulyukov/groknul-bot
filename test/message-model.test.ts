@@ -27,12 +27,18 @@ class FakeMessageCollection {
   updateCalls: UpdateCall[] = [];
   createIndexCalls: { keys: unknown; options?: unknown }[] = [];
   dropIndexCalls: string[] = [];
-  aggregateResult: Message[] = [];
+  aggregateResult: unknown[] = [];
   lastPipeline: unknown[] = [];
+  findOneResult: Partial<Message> | null = null;
+  findOneCall: { filter: unknown; options?: unknown } | undefined;
 
   updateOne(filter: unknown, update: unknown, options?: unknown) {
     this.updateCalls.push({ filter, update, options });
-    return Promise.resolve({ matchedCount: 1, modifiedCount: 1, upsertedCount: 0 });
+    return Promise.resolve({
+      matchedCount: 1,
+      modifiedCount: 1,
+      upsertedCount: 0,
+    });
   }
 
   aggregate<T>(pipeline: unknown[]) {
@@ -40,6 +46,11 @@ class FakeMessageCollection {
     return {
       toArray: async () => this.aggregateResult as T[],
     };
+  }
+
+  findOne(filter: unknown, options?: unknown) {
+    this.findOneCall = { filter, options };
+    return Promise.resolve(this.findOneResult);
   }
 
   createIndex(keys: unknown, options?: unknown) {
@@ -162,4 +173,175 @@ test('getMessagesBefore reads messages above the trigger by telegram id', async 
     { $sort: { telegramId: -1 } },
   ]);
   assert.deepEqual(collection.lastPipeline[2], { $limit: 10 });
+});
+
+test('findRawByMessageTelegramId reads only raw payload fields', async () => {
+  const collection = new FakeMessageCollection();
+  collection.findOneResult = {
+    telegramId: 123,
+    sentAt: new Date('2026-06-25T10:00:00.000Z'),
+    messageType: 'poll',
+    payload: { message: { poll: { question: 'Дата для дс' } } },
+  };
+  const model = new MessageModel(collection as never);
+
+  const raw = await model.findRawByMessageTelegramId(123, -100);
+
+  assert.deepEqual(raw, {
+    telegramId: 123,
+    sentAt: new Date('2026-06-25T10:00:00.000Z'),
+    messageType: 'poll',
+    payload: { message: { poll: { question: 'Дата для дс' } } },
+  });
+  assert.deepEqual(collection.findOneCall, {
+    filter: { telegramId: 123, chatTelegramId: -100 },
+    options: {
+      projection: {
+        _id: 0,
+        telegramId: 1,
+        sentAt: 1,
+        messageType: 1,
+        payload: 1,
+      },
+    },
+  });
+});
+
+test('getChatStats aggregates stored messages with user and hourly breakdowns', async () => {
+  const collection = new FakeMessageCollection();
+  collection.aggregateResult = [
+    {
+      totals: [
+        {
+          totalMessages: 4,
+          firstSentAt: new Date('2026-06-25T08:00:00.000Z'),
+          lastSentAt: new Date('2026-06-25T10:00:00.000Z'),
+        },
+      ],
+      byDay: [{ _id: '2026-06-25', count: 4 }],
+      topUsers: [
+        {
+          _id: 111,
+          count: 3,
+          user: {
+            username: 'stasik',
+            firstName: 'Стасік',
+            lastName: 'Thumb',
+            isBot: false,
+          },
+        },
+      ],
+      peakHours: [{ _id: '2026-06-25 13:00', count: 2 }],
+    },
+  ];
+  const model = new MessageModel(collection as never);
+
+  const stats = await model.getChatStats({
+    chatTelegramId: -100,
+    since: new Date('2026-06-24T21:00:00.000Z'),
+    until: new Date('2026-06-25T21:00:00.000Z'),
+    timeZone: 'Europe/Kiev',
+    dayLimit: 7,
+    topUsersLimit: 5,
+    topHoursLimit: 3,
+    excludeUserTelegramId: 999,
+  });
+
+  assert.deepEqual(stats, {
+    totalMessages: 4,
+    firstSentAt: new Date('2026-06-25T08:00:00.000Z'),
+    lastSentAt: new Date('2026-06-25T10:00:00.000Z'),
+    byDay: [{ day: '2026-06-25', count: 4 }],
+    topUsers: [
+      {
+        userTelegramId: 111,
+        username: 'stasik',
+        firstName: 'Стасік',
+        lastName: 'Thumb',
+        isBot: false,
+        count: 3,
+      },
+    ],
+    peakHours: [{ hour: '2026-06-25 13:00', count: 2 }],
+  });
+  assert.deepEqual(collection.lastPipeline[0], {
+    $match: {
+      chatTelegramId: -100,
+      sentAt: {
+        $gte: new Date('2026-06-24T21:00:00.000Z'),
+        $lt: new Date('2026-06-25T21:00:00.000Z'),
+      },
+      userTelegramId: { $ne: 999 },
+    },
+  });
+  assert.deepEqual(collection.lastPipeline[1], {
+    $facet: {
+      totals: [
+        {
+          $group: {
+            _id: null,
+            totalMessages: { $sum: 1 },
+            firstSentAt: { $min: '$sentAt' },
+            lastSentAt: { $max: '$sentAt' },
+          },
+        },
+      ],
+      byDay: [
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$sentAt',
+                timezone: 'Europe/Kiev',
+              },
+            },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: -1 } },
+        { $limit: 7 },
+      ],
+      topUsers: [
+        { $group: { _id: '$userTelegramId', count: { $sum: 1 } } },
+        { $sort: { count: -1, _id: 1 } },
+        { $limit: 5 },
+        {
+          $lookup: {
+            from: 'telegramusers',
+            localField: '_id',
+            foreignField: 'telegramId',
+            as: 'user',
+          },
+        },
+        { $addFields: { user: { $arrayElemAt: ['$user', 0] } } },
+        {
+          $project: {
+            _id: 1,
+            count: 1,
+            'user.username': 1,
+            'user.firstName': 1,
+            'user.lastName': 1,
+            'user.isBot': 1,
+          },
+        },
+      ],
+      peakHours: [
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m-%d %H:00',
+                date: '$sentAt',
+                timezone: 'Europe/Kiev',
+              },
+            },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { count: -1, _id: -1 } },
+        { $limit: 3 },
+      ],
+    },
+  });
 });

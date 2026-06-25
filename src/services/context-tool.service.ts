@@ -6,6 +6,8 @@ import type {
 import type { MemoryModel } from '../database/models/Memory.js';
 import type { SummaryModel } from '../database/models/Summary.js';
 
+type MessageStatsPeriod = 'today' | 'yesterday' | 'last24h' | 'last7d' | 'all';
+
 export interface ContextToolLimits {
   maxMessages: number;
   maxChars: number;
@@ -26,6 +28,31 @@ export interface ContextToolMessageResult {
   reactions?: string[];
 }
 
+export interface ContextToolStatsResult {
+  period: string;
+  timeZone: string;
+  totalMessages: number;
+  firstSentAt?: Date;
+  lastSentAt?: Date;
+  byDay: { date: string; count: number }[];
+  topUsers: {
+    userTelegramId: number;
+    from: string;
+    count: number;
+    isBot?: boolean;
+  }[];
+  peakHours: { hour: string; count: number }[];
+  source: 'stored_messages';
+}
+
+export interface ContextToolRawMessageResult {
+  id: number;
+  messageType?: PopulatedMessage['messageType'];
+  sentAt?: Date;
+  payloadJson: string;
+  truncated: boolean;
+}
+
 export type ContextToolResult =
   | {
       status: 'ok';
@@ -34,6 +61,8 @@ export type ContextToolResult =
       summaries?: unknown[];
       digest?: string;
       summary?: string;
+      stats?: ContextToolStatsResult;
+      rawMessage?: ContextToolRawMessageResult;
       deleted?: boolean;
     }
   | {
@@ -51,7 +80,9 @@ interface MinimalDatabase {
     | 'getMessagesBefore'
     | 'searchMessages'
     | 'findByMessageTelegramId'
+    | 'findRawByMessageTelegramId'
     | 'countMessages'
+    | 'getChatStats'
   >;
   getMemoryModel(): Pick<
     MemoryModel,
@@ -147,6 +178,104 @@ export class ContextToolService {
     });
 
     return this.messagesResult(messages);
+  }
+
+  async getChatStats(
+    chatTelegramId: number,
+    input: {
+      period?: string;
+      since?: string;
+      until?: string;
+      timeZone?: string;
+      topUsersLimit?: number;
+      topHoursLimit?: number;
+      dayLimit?: number;
+      excludeUserTelegramId?: number;
+      now?: Date;
+    },
+  ): Promise<ContextToolResult> {
+    const explicitSince = this.parseDate(input.since);
+    const explicitUntil = this.parseDate(input.until);
+    const period = this.normalizeStatsPeriod(input.period);
+    const timeZone = this.normalizeTimeZone(input.timeZone);
+    const topUsersLimit = this.normalizeResultLimit(input.topUsersLimit, 10);
+    const topHoursLimit = this.normalizeResultLimit(input.topHoursLimit, 5);
+    const dayLimit = this.normalizeResultLimit(input.dayLimit, 14);
+    const window =
+      explicitSince || explicitUntil
+        ? { since: explicitSince, until: explicitUntil }
+        : this.resolveStatsWindow(period, timeZone, input.now);
+
+    const statsInput = {
+      chatTelegramId,
+      timeZone,
+      topUsersLimit,
+      topHoursLimit,
+      dayLimit,
+    };
+    if (window.since) Object.assign(statsInput, { since: window.since });
+    if (window.until) Object.assign(statsInput, { until: window.until });
+    if (typeof input.excludeUserTelegramId === 'number') {
+      Object.assign(statsInput, {
+        excludeUserTelegramId: input.excludeUserTelegramId,
+      });
+    }
+
+    const stats = await this.database
+      .getMessageModel()
+      .getChatStats(statsInput);
+
+    return {
+      status: 'ok',
+      stats: {
+        period: explicitSince || explicitUntil ? 'custom' : period,
+        timeZone,
+        totalMessages: stats.totalMessages,
+        firstSentAt: stats.firstSentAt,
+        lastSentAt: stats.lastSentAt,
+        byDay: stats.byDay.map((item) => ({
+          date: item.day,
+          count: item.count,
+        })),
+        topUsers: stats.topUsers.map((item) => {
+          const result = {
+            userTelegramId: item.userTelegramId,
+            from:
+              item.username ?? item.firstName ?? String(item.userTelegramId),
+            count: item.count,
+          };
+
+          return typeof item.isBot === 'boolean'
+            ? { ...result, isBot: item.isBot }
+            : result;
+        }),
+        peakHours: stats.peakHours,
+        source: 'stored_messages',
+      },
+    };
+  }
+
+  async getRawMessage(
+    chatTelegramId: number,
+    input: { messageId: number },
+  ): Promise<ContextToolResult> {
+    const message = await this.database
+      .getMessageModel()
+      .findRawByMessageTelegramId(input.messageId, chatTelegramId);
+    if (!message) return { status: 'not_found' };
+
+    const payload = this.stringifyBounded(message.payload);
+
+    return {
+      status: 'ok',
+      rawMessage: {
+        id: message.telegramId,
+        messageType: message.messageType,
+        sentAt: message.sentAt,
+        payloadJson: payload.text,
+        truncated: payload.truncated,
+      },
+    };
   }
 
   async getReplyThread(
@@ -398,10 +527,188 @@ export class ContextToolService {
     return Math.max(0, Math.floor(value));
   }
 
+  private normalizeResultLimit(
+    value: number | undefined,
+    fallback: number,
+  ): number {
+    return Math.min(
+      this.limits.maxResults,
+      this.normalizeLimit(value, fallback),
+    );
+  }
+
+  private normalizeStatsPeriod(value: string | undefined): MessageStatsPeriod {
+    switch (value) {
+      case 'yesterday':
+      case 'last24h':
+      case 'last7d':
+      case 'all':
+        return value;
+      case 'today':
+      default:
+        return 'today';
+    }
+  }
+
+  private resolveStatsWindow(
+    period: MessageStatsPeriod,
+    timeZone: string,
+    now = new Date(),
+  ): { since?: Date; until?: Date } {
+    const dayMs = 24 * 60 * 60 * 1000;
+
+    switch (period) {
+      case 'today':
+        return this.getZonedDayWindow(now, timeZone, 0);
+      case 'yesterday':
+        return this.getZonedDayWindow(now, timeZone, -1);
+      case 'last24h':
+        return { since: new Date(now.getTime() - dayMs), until: now };
+      case 'last7d':
+        return { since: new Date(now.getTime() - 7 * dayMs), until: now };
+      case 'all':
+      default:
+        return {};
+    }
+  }
+
+  private getZonedDayWindow(
+    now: Date,
+    timeZone: string,
+    dayOffset: number,
+  ): { since: Date; until: Date } {
+    const currentParts = this.zonedDateParts(now, timeZone);
+    const targetDay = new Date(
+      Date.UTC(
+        currentParts.year,
+        currentParts.month - 1,
+        currentParts.day + dayOffset,
+      ),
+    );
+    const parts = {
+      year: targetDay.getUTCFullYear(),
+      month: targetDay.getUTCMonth() + 1,
+      day: targetDay.getUTCDate(),
+    };
+    const nextDay = new Date(
+      Date.UTC(parts.year, parts.month - 1, parts.day + 1),
+    );
+
+    return {
+      since: this.zonedLocalTimeToUtc(
+        parts.year,
+        parts.month,
+        parts.day,
+        timeZone,
+      ),
+      until: this.zonedLocalTimeToUtc(
+        nextDay.getUTCFullYear(),
+        nextDay.getUTCMonth() + 1,
+        nextDay.getUTCDate(),
+        timeZone,
+      ),
+    };
+  }
+
+  private zonedDateParts(
+    date: Date,
+    timeZone: string,
+  ): { year: number; month: number; day: number } {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(date);
+    const value = (type: string) =>
+      Number(parts.find((part) => part.type === type)?.value);
+
+    return {
+      year: value('year'),
+      month: value('month'),
+      day: value('day'),
+    };
+  }
+
+  private zonedLocalTimeToUtc(
+    year: number,
+    month: number,
+    day: number,
+    timeZone: string,
+  ): Date {
+    const localAsUtc = Date.UTC(year, month - 1, day);
+    let utc = new Date(localAsUtc);
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      utc = new Date(localAsUtc - this.timeZoneOffsetMs(utc, timeZone));
+    }
+
+    return utc;
+  }
+
+  private timeZoneOffsetMs(date: Date, timeZone: string): number {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(date);
+    const value = (type: string) =>
+      Number(parts.find((part) => part.type === type)?.value);
+
+    return (
+      Date.UTC(
+        value('year'),
+        value('month') - 1,
+        value('day'),
+        value('hour'),
+        value('minute'),
+        value('second'),
+      ) - date.getTime()
+    );
+  }
+
+  private normalizeTimeZone(value: string | undefined): string {
+    const fallback = 'Europe/Kiev';
+    if (!value) return fallback;
+
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: value }).format(new Date());
+      return value;
+    } catch {
+      return fallback;
+    }
+  }
+
   private parseDate(value: string | undefined): Date | undefined {
     if (!value) return undefined;
     const date = new Date(value);
     return Number.isFinite(date.getTime()) ? date : undefined;
+  }
+
+  private stringifyBounded(value: unknown): {
+    text: string;
+    truncated: boolean;
+  } {
+    let text: string;
+    try {
+      text = JSON.stringify(value, null, 2) ?? String(value);
+    } catch {
+      text = String(value);
+    }
+
+    if (text.length <= this.limits.maxChars) {
+      return { text, truncated: false };
+    }
+
+    return {
+      text: `${text.slice(0, this.limits.maxChars)}\n...[truncated]`,
+      truncated: true,
+    };
   }
 
   private messagesResult(messages: PopulatedMessage[]): ContextToolResult {

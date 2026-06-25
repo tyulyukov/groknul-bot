@@ -48,7 +48,11 @@ test('getMessagesBefore returns messages immediately before a trigger', async ()
         },
         searchMessages: async () => [],
         findByMessageTelegramId: async () => null,
+        findRawByMessageTelegramId: async () => null,
         countMessages: async () => 0,
+        getChatStats: async () => {
+          throw new Error('unused');
+        },
       }),
       getMemoryModel: () => ({
         searchByChat: async () => [],
@@ -102,7 +106,11 @@ test('getRecentMessages returns too_large when requested context exceeds hard ca
         getMessagesBefore: async () => [],
         searchMessages: async () => [],
         findByMessageTelegramId: async () => null,
+        findRawByMessageTelegramId: async () => null,
         countMessages: async () => 0,
+        getChatStats: async () => {
+          throw new Error('unused');
+        },
       }),
       getMemoryModel: () => ({
         searchByChat: async () => [],
@@ -146,7 +154,11 @@ test('getChatDigest reads highest-level summaries before recent level-0 summarie
         getMessagesBefore: async () => [],
         searchMessages: async () => [],
         findByMessageTelegramId: async () => null,
+        findRawByMessageTelegramId: async () => null,
         countMessages: async () => 0,
+        getChatStats: async () => {
+          throw new Error('unused');
+        },
       }),
       getMemoryModel: () => ({
         searchByChat: async () => [],
@@ -208,7 +220,11 @@ test('getChatSummaries returns the last matching stored summaries', async () => 
         getMessagesBefore: async () => [],
         searchMessages: async () => [],
         findByMessageTelegramId: async () => null,
+        findRawByMessageTelegramId: async () => null,
         countMessages: async () => 0,
+        getChatStats: async () => {
+          throw new Error('unused');
+        },
       }),
       getMemoryModel: () => ({
         searchByChat: async () => [],
@@ -307,7 +323,11 @@ test('summarizeMessages can summarize a bounded message period', async () => {
           ];
         },
         findByMessageTelegramId: async () => null,
+        findRawByMessageTelegramId: async () => null,
         countMessages: async () => 0,
+        getChatStats: async () => {
+          throw new Error('unused');
+        },
       }),
       getMemoryModel: () => ({
         searchByChat: async () => [],
@@ -348,5 +368,232 @@ test('summarizeMessages can summarize a bounded message period', async () => {
     until: new Date('2026-06-19T01:00:00.000Z'),
     fromUserTelegramId: undefined,
     limit: 5,
+  });
+});
+
+test('getChatStats returns stored message accounting for the requested period', async () => {
+  let statsInput: unknown;
+  const service = new ContextToolService(
+    {
+      getMessageModel: () => ({
+        getRecentMessages: async () => [],
+        getMessagesBefore: async () => [],
+        searchMessages: async () => [],
+        findByMessageTelegramId: async () => null,
+        findRawByMessageTelegramId: async () => null,
+        countMessages: async () => 0,
+        getChatStats: async (input: unknown) => {
+          statsInput = input;
+          return {
+            totalMessages: 4,
+            firstSentAt: new Date('2026-06-25T08:00:00.000Z'),
+            lastSentAt: new Date('2026-06-25T10:00:00.000Z'),
+            byDay: [{ day: '2026-06-25', count: 4 }],
+            topUsers: [
+              {
+                userTelegramId: 111,
+                username: 'stasik',
+                firstName: 'Стасік',
+                count: 3,
+              },
+              {
+                userTelegramId: 222,
+                firstName: 'maksym',
+                count: 1,
+              },
+            ],
+            peakHours: [{ hour: '2026-06-25 13:00', count: 2 }],
+          };
+        },
+      }),
+      getMemoryModel: () => ({
+        searchByChat: async () => [],
+        addMemory: async () => {
+          throw new Error('unused');
+        },
+        deleteById: async () => false,
+        listByChat: async () => [],
+      }),
+      getSummaryModel: () => ({
+        getByLevelAscending: async () => [],
+        getCount: async () => 0,
+      }),
+    },
+    {
+      summarizeText: async () => 'summary',
+    },
+    {
+      maxMessages: 50,
+      maxChars: 10_000,
+      maxResults: 20,
+    },
+  );
+
+  const result = await service.getChatStats(-100, {
+    period: 'today',
+    timeZone: 'Europe/Kiev',
+    topUsersLimit: 2,
+    topHoursLimit: 3,
+    dayLimit: 7,
+    excludeUserTelegramId: 999,
+    now: new Date('2026-06-25T12:00:00.000Z'),
+  });
+
+  assert.equal(result.status, 'ok');
+  assert.deepEqual(statsInput, {
+    chatTelegramId: -100,
+    since: new Date('2026-06-24T21:00:00.000Z'),
+    until: new Date('2026-06-25T21:00:00.000Z'),
+    timeZone: 'Europe/Kiev',
+    topUsersLimit: 2,
+    topHoursLimit: 3,
+    dayLimit: 7,
+    excludeUserTelegramId: 999,
+  });
+  assert.deepEqual(result.stats, {
+    period: 'today',
+    timeZone: 'Europe/Kiev',
+    totalMessages: 4,
+    firstSentAt: new Date('2026-06-25T08:00:00.000Z'),
+    lastSentAt: new Date('2026-06-25T10:00:00.000Z'),
+    byDay: [{ date: '2026-06-25', count: 4 }],
+    topUsers: [
+      {
+        userTelegramId: 111,
+        from: 'stasik',
+        count: 3,
+      },
+      {
+        userTelegramId: 222,
+        from: 'maksym',
+        count: 1,
+      },
+    ],
+    peakHours: [{ hour: '2026-06-25 13:00', count: 2 }],
+    source: 'stored_messages',
+  });
+});
+
+test('getRawMessage returns a bounded stored Telegram payload snapshot', async () => {
+  const service = new ContextToolService(
+    {
+      getMessageModel: () => ({
+        getRecentMessages: async () => [],
+        getMessagesBefore: async () => [],
+        searchMessages: async () => [],
+        findByMessageTelegramId: async () => null,
+        findRawByMessageTelegramId: async (messageId: number) => ({
+          telegramId: messageId,
+          sentAt: new Date('2026-06-25T10:00:00.000Z'),
+          messageType: 'poll',
+          payload: {
+            update_id: 1,
+            message: {
+              message_id: messageId,
+              poll: {
+                question: 'Дата для дс',
+                fresh_telegram_field: 'future value',
+              },
+            },
+          },
+        }),
+        countMessages: async () => 0,
+        getChatStats: async () => {
+          throw new Error('unused');
+        },
+      }),
+      getMemoryModel: () => ({
+        searchByChat: async () => [],
+        addMemory: async () => {
+          throw new Error('unused');
+        },
+        deleteById: async () => false,
+        listByChat: async () => [],
+      }),
+      getSummaryModel: () => ({
+        getByLevelAscending: async () => [],
+        getCount: async () => 0,
+      }),
+    },
+    {
+      summarizeText: async () => 'summary',
+    },
+    {
+      maxMessages: 50,
+      maxChars: 10_000,
+      maxResults: 20,
+    },
+  );
+
+  const result = await service.getRawMessage(-100, { messageId: 456 });
+
+  assert.equal(result.status, 'ok');
+  assert.equal(result.rawMessage?.id, 456);
+  assert.equal(result.rawMessage?.messageType, 'poll');
+  assert.equal(result.rawMessage?.truncated, false);
+  assert.match(
+    result.rawMessage?.payloadJson ?? '',
+    /"fresh_telegram_field": "future value"/,
+  );
+});
+
+test('getChatStats maps yesterday across daylight-saving calendar boundaries', async () => {
+  let statsInput: unknown;
+  const service = new ContextToolService(
+    {
+      getMessageModel: () => ({
+        getRecentMessages: async () => [],
+        getMessagesBefore: async () => [],
+        searchMessages: async () => [],
+        findByMessageTelegramId: async () => null,
+        findRawByMessageTelegramId: async () => null,
+        countMessages: async () => 0,
+        getChatStats: async (input: unknown) => {
+          statsInput = input;
+          return {
+            totalMessages: 0,
+            byDay: [],
+            topUsers: [],
+            peakHours: [],
+          };
+        },
+      }),
+      getMemoryModel: () => ({
+        searchByChat: async () => [],
+        addMemory: async () => {
+          throw new Error('unused');
+        },
+        deleteById: async () => false,
+        listByChat: async () => [],
+      }),
+      getSummaryModel: () => ({
+        getByLevelAscending: async () => [],
+        getCount: async () => 0,
+      }),
+    },
+    {
+      summarizeText: async () => 'summary',
+    },
+    {
+      maxMessages: 50,
+      maxChars: 10_000,
+      maxResults: 20,
+    },
+  );
+
+  await service.getChatStats(-100, {
+    period: 'yesterday',
+    timeZone: 'Europe/Kiev',
+    now: new Date('2026-03-29T21:30:00.000Z'),
+  });
+
+  assert.deepEqual(statsInput, {
+    chatTelegramId: -100,
+    since: new Date('2026-03-28T22:00:00.000Z'),
+    until: new Date('2026-03-29T21:00:00.000Z'),
+    timeZone: 'Europe/Kiev',
+    topUsersLimit: 10,
+    topHoursLimit: 5,
+    dayLimit: 14,
   });
 });

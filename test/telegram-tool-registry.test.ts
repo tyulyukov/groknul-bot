@@ -406,6 +406,122 @@ test('get_messages_before proxies context lookup before a trigger message', asyn
   assert.deepEqual(result, { status: 'ok', messages: [] });
 });
 
+test('get_chat_stats proxies chat accounting lookup', async () => {
+  let seenArgs: unknown[] | undefined;
+  const registry = new TelegramToolRegistry({
+    chatTelegramId: -100,
+    botUserTelegramId: 999,
+    api: {
+      deleteMessage: async () => true,
+      editMessageText: async () => true,
+      setMessageReaction: async () => true,
+    },
+    delivery: {} as never,
+    imageService: disabledImageService,
+    contextTools: {
+      getChatStats: async (...args: unknown[]) => {
+        seenArgs = args;
+        return {
+          status: 'ok',
+          stats: {
+            period: 'today',
+            timeZone: 'Europe/Kiev',
+            totalMessages: 4,
+            byDay: [],
+            topUsers: [],
+            peakHours: [],
+            source: 'stored_messages',
+          },
+        };
+      },
+    } as never,
+    searchService: {} as never,
+    messageModel: {
+      findByMessageTelegramId: async () => null,
+    } as never,
+  });
+
+  const result = await registry.execute('get_chat_stats', {
+    period: 'today',
+    timeZone: 'Europe/Kiev',
+    topUsersLimit: 5,
+  });
+
+  assert.deepEqual(seenArgs, [
+    -100,
+    {
+      period: 'today',
+      since: undefined,
+      until: undefined,
+      timeZone: 'Europe/Kiev',
+      topUsersLimit: 5,
+      topHoursLimit: undefined,
+      dayLimit: undefined,
+      excludeUserTelegramId: 999,
+    },
+  ]);
+  assert.deepEqual(result, {
+    status: 'ok',
+    stats: {
+      period: 'today',
+      timeZone: 'Europe/Kiev',
+      totalMessages: 4,
+      byDay: [],
+      topUsers: [],
+      peakHours: [],
+      source: 'stored_messages',
+    },
+  });
+});
+
+test('get_raw_message proxies stored raw payload lookup', async () => {
+  let seenArgs: unknown[] | undefined;
+  const registry = new TelegramToolRegistry({
+    chatTelegramId: -100,
+    botUserTelegramId: 999,
+    api: {
+      deleteMessage: async () => true,
+      editMessageText: async () => true,
+      setMessageReaction: async () => true,
+    },
+    delivery: {} as never,
+    imageService: disabledImageService,
+    contextTools: {
+      getRawMessage: async (...args: unknown[]) => {
+        seenArgs = args;
+        return {
+          status: 'ok',
+          rawMessage: {
+            id: 456,
+            messageType: 'poll',
+            payloadJson: '{ "message": { "poll": true } }',
+            truncated: false,
+          },
+        };
+      },
+    } as never,
+    searchService: {} as never,
+    messageModel: {
+      findByMessageTelegramId: async () => null,
+    } as never,
+  });
+
+  const result = await registry.execute('get_raw_message', {
+    messageId: 456,
+  });
+
+  assert.deepEqual(seenArgs, [-100, { messageId: 456 }]);
+  assert.deepEqual(result, {
+    status: 'ok',
+    rawMessage: {
+      id: 456,
+      messageType: 'poll',
+      payloadJson: '{ "message": { "poll": true } }',
+      truncated: false,
+    },
+  });
+});
+
 test('ignore_message persists an internal no-reply marker', async () => {
   let saved: Record<string, unknown> | undefined;
   const registry = new TelegramToolRegistry({
