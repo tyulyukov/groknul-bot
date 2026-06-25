@@ -81,6 +81,31 @@ test('extractReplyContextMessages keeps the current reply chain', () => {
   ]);
 });
 
+test('extractReplyContextMessages preserves long media context in reply chain', () => {
+  const longVoiceContext = `Voice message transcript:\n${'а'.repeat(1_200)} фінал`;
+
+  const messages = extractReplyContextMessages({
+    status: 'ok',
+    messages: [
+      {
+        id: 124,
+        from: 'maksym',
+        text: '@groknul_bot расшифруй полностью',
+        replyToMessageId: 123,
+      },
+      {
+        id: 123,
+        from: 'sanyochek',
+        text: '',
+        context: longVoiceContext,
+        messageType: 'voice',
+      },
+    ],
+  });
+
+  assert.equal(messages[1]?.context, longVoiceContext);
+});
+
 test('extractReplyContextMessages omits non-reply threads', () => {
   assert.deepEqual(
     extractReplyContextMessages({
@@ -125,4 +150,19 @@ test('extractCurrentMessageDetails preserves current message media context', () 
     replyQuoteText: 'а это ты ебнул tay keith?',
     reactions: ['😁'],
   });
+});
+
+test('extractCurrentMessageDetails preserves long current media context', () => {
+  const longVoiceContext = `Voice message transcript:\n${'я'.repeat(1_200)} финал`;
+
+  const details = extractCurrentMessageDetails({
+    telegramId: 123,
+    userTelegramId: 777,
+    user: { username: 'maksym' },
+    text: '@groknul_bot что там',
+    context: longVoiceContext,
+    messageType: 'voice',
+  });
+
+  assert.equal(details?.context, longVoiceContext);
 });

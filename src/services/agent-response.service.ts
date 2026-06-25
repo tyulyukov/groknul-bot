@@ -1,4 +1,5 @@
 import { config } from '../common/config.js';
+import { DEFAULT_MEDIA_MAX_TRANSCRIPT_CHARS } from '../common/media-context.js';
 import logger from '../common/logger.js';
 import { database } from '../database/index.js';
 import {
@@ -73,13 +74,19 @@ export const extractReplyContextMessages = (
       const normalized: AgentReplyContextMessage = { id };
       const from = stringField(message.from);
       const userTelegramId = numberField(message.userTelegramId);
-      const text = stringField(message.text, 1_000);
-      const context = stringField(message.context, 1_000);
+      const text = stringField(message.text, AGENT_TEXT_FIELD_MAX_CHARS);
+      const context = stringField(
+        message.context,
+        AGENT_CONTEXT_FIELD_MAX_CHARS,
+      );
       const fileName = stringField(message.fileName);
       const messageType = stringField(message.messageType);
       const sentAt = dateField(message.sentAt);
       const replyToMessageId = numberField(message.replyToMessageId);
-      const replyQuoteText = stringField(message.replyQuoteText, 1_000);
+      const replyQuoteText = stringField(
+        message.replyQuoteText,
+        AGENT_TEXT_FIELD_MAX_CHARS,
+      );
       const reactions = stringArrayField(message.reactions);
 
       if (from) normalized.from = from;
@@ -122,13 +129,16 @@ export const extractCurrentMessageDetails = (
     stringField(user?.firstName) ??
     stringField(raw.from);
   const userTelegramId = numberField(raw.userTelegramId);
-  const text = stringField(raw.text, 1_000);
-  const context = stringField(raw.context, 1_000);
+  const text = stringField(raw.text, AGENT_TEXT_FIELD_MAX_CHARS);
+  const context = stringField(raw.context, AGENT_CONTEXT_FIELD_MAX_CHARS);
   const fileName = stringField(raw.fileName);
   const messageType = stringField(raw.messageType);
   const sentAt = dateField(raw.sentAt);
   const replyToMessageId = numberField(raw.replyToMessageTelegramId);
-  const replyQuoteText = stringField(raw.replyQuoteText, 1_000);
+  const replyQuoteText = stringField(
+    raw.replyQuoteText,
+    AGENT_TEXT_FIELD_MAX_CHARS,
+  );
   const reactions = Array.isArray(raw.reactions)
     ? raw.reactions
         .map((reaction) => {
@@ -164,6 +174,9 @@ const stringField = (value: unknown, maxLength = 200): string | undefined => {
   const text = value.trim();
   return text ? text.slice(0, maxLength) : undefined;
 };
+
+const AGENT_TEXT_FIELD_MAX_CHARS = 1_000;
+const AGENT_CONTEXT_FIELD_MAX_CHARS = DEFAULT_MEDIA_MAX_TRANSCRIPT_CHARS;
 
 const stringArrayField = (value: unknown): string[] =>
   Array.isArray(value)
