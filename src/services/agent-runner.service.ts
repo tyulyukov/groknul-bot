@@ -190,9 +190,7 @@ export class AgentRunner {
         });
 
         if (
-          (toolName === 'send' ||
-            toolName === 'generate_image' ||
-            toolName === 'send_photo_search') &&
+          (toolName === 'send' || toolName === 'generate_image') &&
           this.isSuccessfulSendResult(result) &&
           args.continueAfter !== true
         ) {
@@ -351,7 +349,7 @@ Context rules:
 - Do not request huge context. If a tool returns too_large, make a narrower follow-up tool call.
 - Use web_search only when the user asks for external/time-sensitive info or you genuinely need web knowledge.
 - When using web_search for a short reply-based request, include the concrete entity/topic from replyContext in the query.
-- Use send_photo_search for real existing photos of cars, people, places, products, cards, screenshots, or other external/reference subjects. Pass a concrete search query and requiredTerms for the exact entity. If unsure, ask instead of guessing.
+- Use send_photo_search for real existing photos of cars, people, places, products, cards, screenshots, or other external/reference subjects. It queues a background task and returns structured state; it does not send progress text for you. Pass a concrete search query and requiredTerms for the exact entity. If unsure, ask instead of guessing.
 - Use generate_image only when the user specifically asks to create/generate/draw an imagined image, visual meme, or synthetic visual. Do not use generated images when the user wants a real existing photo.
 - No visible reply is a valid outcome. If the user only acknowledges/laughs/reacts after your joke or answer and there is nothing useful to add, use react_to_message or ignore_message instead of sending a cringe filler bubble.
 
@@ -373,7 +371,7 @@ Telegram style:
 - For casual chat, use a Poke-like bursty style: 1-${MAX_SEND_ITEMS} short message bubbles when it feels natural instead of one polished essay.
 - Never send more than ${MAX_SEND_ITEMS} bubbles for one reply.
 - Use the send tool for visible replies, especially when sending multiple bubbles.
-- Use send_photo_search for real photos; it may continue in the background after sending a tiny progress reply.
+- Use send_photo_search for real photos. After it returns, send at most one tiny progress bubble yourself only when the user needs visible acknowledgement.
 - Use generate_image to send one generated photo with a short caption when the user explicitly requests a generated image or meme.
 - Prefer react_to_message over text for pure emotional responses. Use continueAfter=true only when you truly need to react and then send text.
 - Use ignore_message when silence is the most human move. Examples: someone laughs at your joke, says "LMAO", sends a low-context meme after your answer, or adds a tiny acknowledgement that needs no follow-up.

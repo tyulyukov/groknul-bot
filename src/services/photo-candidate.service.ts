@@ -72,9 +72,10 @@ export const resolvePhotoCandidates = (
   input: ResolvePhotoCandidatesInput,
 ): PhotoCandidateResolution => {
   const queryTerms = normalizeTerms([input.query], { dropStopWords: true });
-  const requiredTerms = input.requiredTerms?.length
-    ? normalizeTerms(input.requiredTerms)
-    : [];
+  const requiredTerms = mergeTerms(
+    normalizeTerms(input.requiredTerms ?? []),
+    inferRequiredTerms(queryTerms),
+  );
   const negativeTerms = normalizeTerms(input.negativeTerms ?? []);
   const limit = clampLimit(input.limit ?? 3);
   const seenImageUrls = new Set<string>();
@@ -88,7 +89,7 @@ export const resolvePhotoCandidates = (
     if (seenImageUrls.has(base.imageUrl)) continue;
     seenImageUrls.add(base.imageUrl);
 
-    const candidateText = normalizeText([
+    const candidateTerms = normalizeTermSet([
       base.title,
       base.snippet,
       base.source,
@@ -96,19 +97,19 @@ export const resolvePhotoCandidates = (
       base.imageUrl,
     ]);
     const matchedQueryTerms = queryTerms.filter((term) =>
-      candidateText.includes(term),
+      candidateTerms.has(term),
     );
     const matchedRequiredTerms = requiredTerms.filter((term) =>
-      candidateText.includes(term),
+      candidateTerms.has(term),
     );
     const missingRequiredTerms = requiredTerms.filter(
       (term) => !matchedRequiredTerms.includes(term),
     );
     const matchedNegativeTerms = negativeTerms.filter((term) =>
-      candidateText.includes(term),
+      candidateTerms.has(term),
     );
     const matchedUnsafeTerms = UNSAFE_PHOTO_TERMS.filter((term) =>
-      candidateText.includes(term),
+      candidateTerms.has(term),
     );
 
     if (missingRequiredTerms.length > 0) {
@@ -269,6 +270,15 @@ const normalizeText = (values: Array<string | undefined>): string =>
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+
+const normalizeTermSet = (values: Array<string | undefined>): Set<string> =>
+  new Set(normalizeText(values).split(' ').filter(Boolean));
+
+const mergeTerms = (...groups: string[][]): string[] =>
+  Array.from(new Set(groups.flat()));
+
+const inferRequiredTerms = (queryTerms: string[]): string[] =>
+  queryTerms.filter((term) => /\d/.test(term) || term.length >= 5);
 
 const clampLimit = (value: number): number =>
   Math.max(1, Math.min(MAX_SELECTED_PHOTOS, Math.floor(value)));

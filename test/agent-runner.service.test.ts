@@ -514,31 +514,61 @@ test('AgentRunner stops after a generated image is sent', async () => {
   assert.deepEqual(result.toolsUsed, ['generate_image']);
 });
 
-test('AgentRunner stops after a photo search task queues visible progress', async () => {
+test('AgentRunner continues after photo search queues so the model chooses visible wording', async () => {
+  let completions = 0;
   const client: AgentChatClient = {
-    complete: async () => ({
-      message: {
-        role: 'assistant',
-        tool_calls: [
-          {
-            id: 'call_photo_search',
-            type: 'function',
-            function: {
-              name: 'send_photo_search',
-              arguments: '{"query":"brabus b63","requiredTerms":["brabus"]}',
+    complete: async () => {
+      completions += 1;
+      return completions === 1
+        ? {
+            message: {
+              role: 'assistant',
+              tool_calls: [
+                {
+                  id: 'call_photo_search',
+                  type: 'function',
+                  function: {
+                    name: 'send_photo_search',
+                    arguments:
+                      '{"query":"brabus b63","requiredTerms":["brabus"]}',
+                  },
+                },
+              ],
             },
-          },
-        ],
-      },
-    }),
+          }
+        : {
+            message: {
+              role: 'assistant',
+              tool_calls: [
+                {
+                  id: 'call_send',
+                  type: 'function',
+                  function: {
+                    name: 'send',
+                    arguments: '{"items":[{"plainText":"ищу, ща будет"}]}',
+                  },
+                },
+              ],
+            },
+          };
+    },
   };
+  const executedTools: string[] = [];
   const registry: AgentToolRegistry = {
     getToolDefinitions: () => [],
-    execute: async () => ({
-      status: 'ok',
-      photoTask: { status: 'queued', query: 'brabus b63' },
-      deliveries: [{ telegramId: 888, format: 'plain' }],
-    }),
+    execute: async (name) => {
+      executedTools.push(name);
+      return name === 'send_photo_search'
+        ? {
+            status: 'ok',
+            reason: 'photo_task_queued',
+            photoTask: { status: 'queued', query: 'brabus b63' },
+          }
+        : {
+            status: 'ok',
+            deliveries: [{ telegramId: 888, format: 'plain' }],
+          };
+    },
   };
   const runner = new AgentRunner(client, registry, {
     model: 'agent-model',
@@ -552,7 +582,9 @@ test('AgentRunner stops after a photo search task queues visible progress', asyn
   });
 
   assert.equal(result.status, 'sent');
-  assert.deepEqual(result.toolsUsed, ['send_photo_search']);
+  assert.equal(completions, 2);
+  assert.deepEqual(executedTools, ['send_photo_search', 'send']);
+  assert.deepEqual(result.toolsUsed, ['send_photo_search', 'send']);
 });
 
 test('AgentRunner includes active photo task context in the model input', async () => {

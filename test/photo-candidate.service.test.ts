@@ -39,6 +39,71 @@ test('resolvePhotoCandidates prefers required metadata matches over broad car re
   );
 });
 
+test('resolvePhotoCandidates requires specific model terms from the query', () => {
+  const resolution = resolvePhotoCandidates({
+    query: 'brabus b63',
+    requiredTerms: ['brabus'],
+    limit: 3,
+    results: [
+      {
+        title: 'Mercedes Brabus G63 wallpaper',
+        snippet: 'Brabus SUV night photo',
+        imageUrl: 'https://images.example.com/brabus-g63.jpg',
+        sourceUrl: 'https://example.com/brabus-g63',
+        score: 10,
+      },
+      {
+        title: 'Mercedes Brabus B63 card photo',
+        snippet: 'Brabus B63 body kit and badge close-up',
+        imageUrl: 'https://images.example.com/brabus-b63.jpg',
+        sourceUrl: 'https://example.com/brabus-b63',
+        score: 2,
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    resolution.selected.map((candidate) => candidate.imageUrl),
+    ['https://images.example.com/brabus-b63.jpg'],
+  );
+  assert.equal(
+    resolution.rejected.some(
+      (candidate) =>
+        candidate.imageUrl === 'https://images.example.com/brabus-g63.jpg' &&
+        candidate.reason.includes('missing required: b63'),
+    ),
+    true,
+  );
+});
+
+test('resolvePhotoCandidates infers required model terms without model-supplied requiredTerms', () => {
+  const resolution = resolvePhotoCandidates({
+    query: 'send photo of brabus b63',
+    limit: 3,
+    results: [
+      {
+        title: 'Mercedes Brabus G63 wallpaper',
+        snippet: 'Brabus SUV night photo',
+        imageUrl: 'https://images.example.com/brabus-g63.jpg',
+        sourceUrl: 'https://example.com/brabus-g63',
+        score: 10,
+      },
+      {
+        title: 'Mercedes Brabus B63 card photo',
+        snippet: 'Brabus B63 body kit and badge close-up',
+        imageUrl: 'https://images.example.com/brabus-b63.jpg',
+        sourceUrl: 'https://example.com/brabus-b63',
+        score: 2,
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    resolution.selected.map((candidate) => candidate.imageUrl),
+    ['https://images.example.com/brabus-b63.jpg'],
+  );
+});
+
 test('resolvePhotoCandidates rejects low confidence candidates instead of picking the first image', () => {
   const resolution = resolvePhotoCandidates({
     query: 'brabus',

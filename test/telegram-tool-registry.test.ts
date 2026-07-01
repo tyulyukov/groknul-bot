@@ -344,7 +344,7 @@ test('generate_image generates and sends a Telegram photo attachment', async () 
   });
 });
 
-test('send_photo_search queues a background image search and returns visible progress', async () => {
+test('send_photo_search queues a background image search without hardcoded progress text', async () => {
   const backgroundTasks: Array<() => Promise<void>> = [];
   const sentPayloads: unknown[] = [];
   const completedPatches: unknown[] = [];
@@ -416,20 +416,17 @@ test('send_photo_search queues a background image search and returns visible pro
   });
 
   assert.equal((result as { status?: unknown }).status, 'ok');
+  assert.equal(
+    (result as { reason?: unknown }).reason,
+    'photo_task_queued',
+  );
   assert.equal(photoTasks.getActive(-100)?.status, 'queued');
   assert.equal(backgroundTasks.length, 1);
-  assert.deepEqual(sentPayloads[0], {
-    items: [
-      {
-        plainText: 'ищу фото: brabus b63',
-        replyToMessageId: 123,
-      },
-    ],
-  });
+  assert.equal(sentPayloads.length, 0);
 
   await backgroundTasks[0]!();
   assert.equal(photoTasks.getActive(-100), undefined);
-  assert.deepEqual(sentPayloads[1], {
+  assert.deepEqual(sentPayloads[0], {
     items: [
       {
         plainText: 'brabus b63',
@@ -450,6 +447,56 @@ test('send_photo_search queues a background image search and returns visible pro
     ],
   });
   assert.deepEqual(completedPatches, [{ selectedCount: 1 }]);
+});
+
+test('send_photo_search reports an active task without sending hardcoded status text', async () => {
+  const sentPayloads: unknown[] = [];
+  const photoTasks = new PhotoTaskRegistry(
+    () => new Date('2026-07-01T10:00:00.000Z'),
+  );
+  const active = photoTasks.start({
+    chatTelegramId: -100,
+    triggerMessageId: 123,
+    query: 'brabus b63',
+  });
+  const registry = new TelegramToolRegistry({
+    chatTelegramId: -100,
+    botUserTelegramId: 999,
+    triggerMessageId: 124,
+    api: {
+      deleteMessage: async () => true,
+      editMessageText: async () => true,
+      setMessageReaction: async () => true,
+    },
+    delivery: {
+      send: async (_chatId: number, payload: unknown) => {
+        sentPayloads.push(payload);
+        return {
+          status: 'ok',
+          deliveries: [{ telegramId: 456, format: 'plain' }],
+        };
+      },
+    } as never,
+    imageService: disabledImageService,
+    contextTools: {} as never,
+    searchService: {} as never,
+    messageModel: {
+      findByMessageTelegramId: async () => null,
+    } as never,
+    photoTasks,
+  });
+
+  const result = await registry.execute('send_photo_search', {
+    query: 'brabus b63',
+  });
+
+  assert.equal((result as { status?: unknown }).status, 'ok');
+  assert.equal(
+    (result as { reason?: unknown }).reason,
+    'photo_task_already_running',
+  );
+  assert.deepEqual((result as { photoTask?: unknown }).photoTask, active);
+  assert.equal(sentPayloads.length, 0);
 });
 
 test('send_photo_search background task exits when it is no longer current', async () => {
@@ -517,7 +564,7 @@ test('send_photo_search background task exits when it is no longer current', asy
   await backgroundTasks[0]!();
 
   assert.equal(photoTasks.getActive(-100)?.id, current.id);
-  assert.equal(sentPayloads.length, 1);
+  assert.equal(sentPayloads.length, 0);
 });
 
 test('react_to_message replaces the bot reaction locally after Telegram succeeds', async () => {

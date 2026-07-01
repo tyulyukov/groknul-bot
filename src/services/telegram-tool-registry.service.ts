@@ -142,7 +142,7 @@ export class TelegramToolRegistry implements AgentToolRegistry {
         : []),
       this.tool(
         'send_photo_search',
-        'Search for real existing photo candidates through SearXNG image search, validate metadata against the requested entity, send a short progress reply immediately, then send the selected photo(s) in the background. Use this for real photos of cars, cards, people, places, products, screenshots, or other external/reference subjects. Do not use it for generated/imagined meme art. Pass requiredTerms for the exact entity so wrong candidates are rejected.',
+        'Queue a background SearXNG image search for real existing photo candidates, validate metadata against the requested entity, then send selected photo(s) when ready. This tool returns structured task state and does not send progress text; use send separately if the user needs visible acknowledgement. Use this for real photos of cars, cards, people, places, products, screenshots, or other external/reference subjects. Do not use it for generated/imagined meme art. Pass requiredTerms for the exact entity so wrong candidates are rejected.',
         {
           type: 'object',
           properties: {

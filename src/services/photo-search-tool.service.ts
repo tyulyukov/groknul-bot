@@ -32,25 +32,10 @@ export class PhotoSearchToolService {
       this.input.chatTelegramId,
     );
     if (activeTask) {
-      const delivery = await this.input.delivery.send(
-        this.input.chatTelegramId,
-        {
-          items: [
-            {
-              plainText: this.activePhotoTaskText(activeTask),
-              replyToMessageId:
-                this.optionalNumberArg(args.replyToMessageId) ??
-                this.input.triggerMessageId,
-            },
-          ],
-        },
-      );
-
       return {
         status: 'ok',
         reason: 'photo_task_already_running',
         photoTask: activeTask,
-        deliveries: delivery.deliveries,
       };
     }
 
@@ -66,26 +51,6 @@ export class PhotoSearchToolService {
         0,
       query,
     });
-    let delivery: { deliveries: unknown[] };
-    try {
-      delivery = await this.input.delivery.send(this.input.chatTelegramId, {
-        items: [
-          {
-            plainText: `ищу фото: ${query}`,
-            replyToMessageId:
-              this.optionalNumberArg(args.replyToMessageId) ??
-              this.input.triggerMessageId,
-          },
-        ],
-      });
-    } catch (error) {
-      this.input.photoTasks.fail(
-        task,
-        error instanceof Error ? error.message : String(error),
-      );
-      throw error;
-    }
-
     const requiredTerms = this.stringArrayArg(args.requiredTerms);
     const negativeTerms = this.stringArrayArg(args.negativeTerms);
     const caption = this.stringArg(args.caption)?.trim().slice(0, 200) || query;
@@ -102,8 +67,8 @@ export class PhotoSearchToolService {
 
     return {
       status: 'ok',
+      reason: 'photo_task_queued',
       photoTask: task,
-      deliveries: delivery.deliveries,
     };
   }
 
@@ -226,14 +191,6 @@ export class PhotoSearchToolService {
         },
       ],
     });
-  }
-
-  private activePhotoTaskText(task: PhotoTaskSnapshot): string {
-    if (task.status === 'sending') {
-      return `уже отправляю фото: ${task.query}`;
-    }
-
-    return `еще ищу фото: ${task.query}`;
   }
 
   private logCandidate(candidate: PhotoCandidate): Record<string, unknown> {
