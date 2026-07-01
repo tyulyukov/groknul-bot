@@ -22,8 +22,10 @@ import {
   type SendPayload,
   type TelegramRichDeliveryService,
 } from './telegram-rich-delivery.service.js';
+import { PhotoSearchToolService } from './photo-search-tool.service.js';
 import { markdownToTelegramHtml } from '../utils/markdown-to-telegram-html.js';
 import { MESSAGE_TYPE } from '../common/message-types.js';
+import { PhotoTaskRegistry } from './photo-task-registry.service.js';
 
 export interface TelegramActionApi {
   deleteMessage(chatId: number, messageId: number): Promise<unknown>;
@@ -44,6 +46,7 @@ export interface TelegramActionApi {
 interface TelegramToolRegistryInput {
   chatTelegramId: number;
   botUserTelegramId: number;
+  triggerMessageId?: number;
   triggerUserTelegramId?: number;
   api: TelegramActionApi;
   delivery: TelegramRichDeliveryService;
@@ -65,6 +68,8 @@ interface TelegramToolRegistryInput {
     | 'markDeleted'
     | 'saveMessage'
   >;
+  photoTasks?: PhotoTaskRegistry;
+  runInBackground?: (task: () => Promise<void>) => void;
 }
 
 export class TelegramToolRegistry implements AgentToolRegistry {
@@ -135,6 +140,45 @@ export class TelegramToolRegistry implements AgentToolRegistry {
             ),
           ]
         : []),
+      this.tool(
+        'send_photo_search',
+        'Search for real existing photo candidates through SearXNG image search, validate metadata against the requested entity, send a short progress reply immediately, then send the selected photo(s) in the background. Use this for real photos of cars, cards, people, places, products, screenshots, or other external/reference subjects. Do not use it for generated/imagined meme art. Pass requiredTerms for the exact entity so wrong candidates are rejected.',
+        {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description:
+                'Concrete image search query for the exact real-world subject.',
+            },
+            caption: {
+              type: 'string',
+              description:
+                'Short caption for the photo album. Defaults to the query.',
+            },
+            requiredTerms: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'Terms that must appear in candidate title/snippet/source metadata.',
+            },
+            negativeTerms: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'Terms that reject candidates when present in metadata.',
+            },
+            limit: {
+              type: 'number',
+              description:
+                'How many validated photos to send. Use 2-4 by default; maximum is 10.',
+            },
+            replyToMessageId: { type: 'number' },
+            continueAfter: { type: 'boolean' },
+          },
+          required: ['query'],
+        },
+      ),
       this.tool(
         'get_recent_messages',
         'Fetch the last N raw chat messages, optionally only messages from the last sinceMinutes minutes. Use this for fresh context and vibe when the exact anchor message does not matter.',
@@ -326,6 +370,8 @@ export class TelegramToolRegistry implements AgentToolRegistry {
         return this.send(args);
       case 'generate_image':
         return this.generateImage(args);
+      case 'send_photo_search':
+        return this.sendPhotoSearch(args);
       case 'get_recent_messages':
         return this.input.contextTools.getRecentMessages(
           this.input.chatTelegramId,
@@ -510,6 +556,19 @@ export class TelegramToolRegistry implements AgentToolRegistry {
     );
 
     return this.input.delivery.send(this.input.chatTelegramId, payload);
+  }
+
+  private async sendPhotoSearch(
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    return new PhotoSearchToolService({
+      chatTelegramId: this.input.chatTelegramId,
+      triggerMessageId: this.input.triggerMessageId,
+      delivery: this.input.delivery,
+      searchService: this.input.searchService,
+      photoTasks: this.input.photoTasks,
+      runInBackground: this.input.runInBackground,
+    }).execute(args);
   }
 
   private onlyFirstItemCanReply(payload: SendPayload): SendPayload {

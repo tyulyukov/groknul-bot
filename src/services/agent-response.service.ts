@@ -26,6 +26,7 @@ import {
   RuntimeCodexOAuthStatusProvider,
   type CodexOAuthStatusProvider,
 } from './codex-oauth-status.service.js';
+import { PhotoTaskRegistry } from './photo-task-registry.service.js';
 
 export interface AgentResponseInput {
   api: TelegramApiLike;
@@ -206,6 +207,7 @@ export class AgentResponseService {
     private readonly rawTelegramApiClient: RawTelegramApiClient,
     private readonly searxngSearchService: SearxngSearchService,
     private readonly codexOAuthStatus: CodexOAuthStatusProvider = new RuntimeCodexOAuthStatusProvider(),
+    private readonly photoTasks: PhotoTaskRegistry = new PhotoTaskRegistry(),
   ) {}
 
   async generateAndSend(
@@ -237,6 +239,7 @@ export class AgentResponseService {
     const registry = new TelegramToolRegistry({
       chatTelegramId: input.chatTelegramId,
       botUserTelegramId: input.botUserTelegramId,
+      triggerMessageId: input.triggerMessageId,
       triggerUserTelegramId: dbTriggerMessage.userTelegramId,
       api: input.api,
       delivery,
@@ -245,6 +248,7 @@ export class AgentResponseService {
       contextTools: this.contextToolService,
       searchService: this.searxngSearchService,
       messageModel,
+      photoTasks: this.photoTasks,
     });
     const runner = new AgentRunner(this.aiClient, registry, {
       model: config.openRouter.models.agent,
@@ -265,6 +269,7 @@ export class AgentResponseService {
       chatMemories,
       replyContext,
       currentMessageDetails: extractCurrentMessageDetails(dbTriggerMessage),
+      activePhotoTask: this.photoTasks.getActive(input.chatTelegramId),
     });
 
     if (

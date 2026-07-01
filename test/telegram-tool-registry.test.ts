@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { TelegramToolRegistry } from '../src/services/telegram-tool-registry.service.js';
+import { PhotoTaskRegistry } from '../src/services/photo-task-registry.service.js';
 
 const disabledImageService = {
   generateImage: async () => null,
@@ -341,6 +342,182 @@ test('generate_image generates and sends a Telegram photo attachment', async () 
     status: 'ok',
     deliveries: [{ telegramId: 456, format: 'photo' }],
   });
+});
+
+test('send_photo_search queues a background image search and returns visible progress', async () => {
+  const backgroundTasks: Array<() => Promise<void>> = [];
+  const sentPayloads: unknown[] = [];
+  const completedPatches: unknown[] = [];
+  const photoTasks = new PhotoTaskRegistry(
+    () => new Date('2026-07-01T10:00:00.000Z'),
+  );
+  const originalComplete = photoTasks.complete.bind(photoTasks);
+  photoTasks.complete = ((task, patch) => {
+    completedPatches.push(patch);
+    originalComplete(task, patch);
+  }) as PhotoTaskRegistry['complete'];
+  const registry = new TelegramToolRegistry({
+    chatTelegramId: -100,
+    botUserTelegramId: 999,
+    triggerMessageId: 123,
+    api: {
+      deleteMessage: async () => true,
+      editMessageText: async () => true,
+      setMessageReaction: async () => true,
+    },
+    delivery: {
+      send: async (_chatId: number, payload: unknown) => {
+        sentPayloads.push(payload);
+        return {
+          status: 'ok',
+          deliveries: [{ telegramId: 456, format: 'plain' }],
+        };
+      },
+    } as never,
+    imageService: disabledImageService,
+    contextTools: {} as never,
+    searchService: {
+      searchImages: async () => ({
+        status: 'ok',
+        query: 'brabus b63',
+        results: [
+          {
+            title: 'Brabus B63',
+            imageUrl: 'https://images.example.com/brabus-b63.jpg',
+            thumbnailUrl: 'https://images.example.com/thumb/brabus-b63.jpg',
+            sourceUrl: 'https://example.com/brabus-b63',
+            snippet: 'Brabus badge',
+            resolution: '12000x8000',
+          },
+          {
+            title: 'Brabus B63 rear',
+            imageUrl: 'https://images.example.com/brabus-b63-rear.jpg',
+            sourceUrl: 'https://example.com/brabus-b63-rear',
+            snippet: 'Brabus B63 badge',
+            resolution: '1200x800',
+          },
+        ],
+        cached: false,
+      }),
+    } as never,
+    messageModel: {
+      findByMessageTelegramId: async () => null,
+    } as never,
+    photoTasks,
+    runInBackground: (task) => {
+      backgroundTasks.push(task);
+    },
+  });
+
+  const result = await registry.execute('send_photo_search', {
+    query: 'brabus b63',
+    requiredTerms: ['brabus'],
+    limit: 2,
+  });
+
+  assert.equal((result as { status?: unknown }).status, 'ok');
+  assert.equal(photoTasks.getActive(-100)?.status, 'queued');
+  assert.equal(backgroundTasks.length, 1);
+  assert.deepEqual(sentPayloads[0], {
+    items: [
+      {
+        plainText: 'ищу фото: brabus b63',
+        replyToMessageId: 123,
+      },
+    ],
+  });
+
+  await backgroundTasks[0]!();
+  assert.equal(photoTasks.getActive(-100), undefined);
+  assert.deepEqual(sentPayloads[1], {
+    items: [
+      {
+        plainText: 'brabus b63',
+        replyToMessageId: 123,
+        attachments: [
+          {
+            type: 'photo',
+            fileIdOrUrl: 'https://images.example.com/thumb/brabus-b63.jpg',
+            captionPlainText: 'brabus b63',
+          },
+          {
+            type: 'photo',
+            fileIdOrUrl: 'https://images.example.com/brabus-b63-rear.jpg',
+            captionPlainText: undefined,
+          },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(completedPatches, [{ selectedCount: 1 }]);
+});
+
+test('send_photo_search background task exits when it is no longer current', async () => {
+  let nowMs = new Date('2026-07-01T10:00:00.000Z').getTime();
+  const backgroundTasks: Array<() => Promise<void>> = [];
+  const sentPayloads: unknown[] = [];
+  const photoTasks = new PhotoTaskRegistry(() => new Date(nowMs), 60_000);
+  const registry = new TelegramToolRegistry({
+    chatTelegramId: -100,
+    botUserTelegramId: 999,
+    triggerMessageId: 123,
+    api: {
+      deleteMessage: async () => true,
+      editMessageText: async () => true,
+      setMessageReaction: async () => true,
+    },
+    delivery: {
+      send: async (_chatId: number, payload: unknown) => {
+        sentPayloads.push(payload);
+        return {
+          status: 'ok',
+          deliveries: [{ telegramId: 456, format: 'plain' }],
+        };
+      },
+    } as never,
+    imageService: disabledImageService,
+    contextTools: {} as never,
+    searchService: {
+      searchImages: async () => ({
+        status: 'ok',
+        query: 'old photo',
+        results: [
+          {
+            title: 'Old Photo',
+            imageUrl: 'https://images.example.com/old.jpg',
+            sourceUrl: 'https://example.com/old',
+            snippet: 'old photo',
+          },
+        ],
+        cached: false,
+      }),
+    } as never,
+    messageModel: {
+      findByMessageTelegramId: async () => null,
+    } as never,
+    photoTasks,
+    runInBackground: (task) => {
+      backgroundTasks.push(task);
+    },
+  });
+
+  await registry.execute('send_photo_search', {
+    query: 'old photo',
+    requiredTerms: ['old'],
+  });
+  nowMs += 61_000;
+  assert.equal(photoTasks.getActive(-100), undefined);
+
+  const current = photoTasks.start({
+    chatTelegramId: -100,
+    triggerMessageId: 124,
+    query: 'new photo',
+  });
+
+  await backgroundTasks[0]!();
+
+  assert.equal(photoTasks.getActive(-100)?.id, current.id);
+  assert.equal(sentPayloads.length, 1);
 });
 
 test('react_to_message replaces the bot reaction locally after Telegram succeeds', async () => {

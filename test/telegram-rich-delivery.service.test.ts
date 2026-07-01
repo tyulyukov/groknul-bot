@@ -37,6 +37,22 @@ test('parseSendPayload caps user-visible message bubbles', () => {
   );
 });
 
+test('parseSendPayload preserves non-album attachments beyond the media group cap', () => {
+  const payload = parseSendPayload({
+    items: [
+      {
+        plainText: 'docs',
+        attachments: Array.from({ length: 12 }, (_, index) => ({
+          type: 'document',
+          fileIdOrUrl: `https://files.example.com/doc-${index + 1}.pdf`,
+        })),
+      },
+    ],
+  });
+
+  assert.equal(payload?.items[0]?.attachments?.length, 12);
+});
+
 test('send falls back from rich markdown to HTML sendMessage and persists delivery metadata', async () => {
   const calls: string[] = [];
   const api = {
@@ -176,6 +192,250 @@ test('send persists photo attachment as photo with attachment caption text', asy
     deliveryText: '<b>photo caption</b>',
     deliveryFallbackReason: undefined,
   });
+});
+
+test('send groups multiple photo attachments into a Telegram media album', async () => {
+  const sentGroups: unknown[] = [];
+  const saved: unknown[] = [];
+  const service = new TelegramRichDeliveryService(
+    {
+      sendChatAction: async () => undefined,
+      sendMessage: async () => {
+        throw new Error('unused');
+      },
+      sendPhoto: async () => {
+        throw new Error('individual photo fallback unused');
+      },
+      sendMediaGroup: async (
+        _chatId: number,
+        media: readonly unknown[],
+        options: Record<string, unknown> = {},
+      ) => {
+        sentGroups.push({ media, options });
+        return media.map((item, index) => ({
+          message_id: 900 + index,
+          date: 1_778_800_010 + index,
+          caption:
+            typeof (item as { caption?: unknown }).caption === 'string'
+              ? (item as { caption: string }).caption
+              : undefined,
+        }));
+      },
+    },
+    { sendRichMessage: async () => ({ message_id: 1, date: 1 }) },
+    {
+      saveMessage: async (doc: unknown) => {
+        saved.push(doc);
+        return doc;
+      },
+    },
+    999,
+    { sleep: async () => undefined },
+  );
+
+  const result = await service.send(-100, {
+    items: [
+      {
+        plainText: 'outer text',
+        replyToMessageId: 123,
+        attachments: [
+          {
+            type: 'photo',
+            fileIdOrUrl: 'https://images.example.com/one.jpg',
+            captionRichMarkdown: '**brabus**',
+          },
+          {
+            type: 'photo',
+            fileIdOrUrl: 'https://images.example.com/two.jpg',
+            captionPlainText: 'second caption is ignored in album',
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(sentGroups.length, 1);
+  assert.deepEqual(sentGroups[0], {
+    media: [
+      {
+        type: 'photo',
+        media: 'https://images.example.com/one.jpg',
+        caption: '<b>brabus</b>',
+        parse_mode: 'HTML',
+      },
+      {
+        type: 'photo',
+        media: 'https://images.example.com/two.jpg',
+      },
+    ],
+    options: { reply_to_message_id: 123 },
+  });
+  assert.deepEqual(result.deliveries, [
+    { telegramId: 900, format: 'photo' },
+    { telegramId: 901, format: 'photo' },
+  ]);
+  assert.equal((saved[0] as { text?: unknown }).text, '**brabus**');
+  assert.equal((saved[1] as { text?: unknown }).text, '');
+});
+
+test('send falls back to individual photos when media album sending fails', async () => {
+  const sentPhotos: string[] = [];
+  const service = new TelegramRichDeliveryService(
+    {
+      sendChatAction: async () => undefined,
+      sendMessage: async () => {
+        throw new Error('unused');
+      },
+      sendMediaGroup: async () => {
+        throw new Error('album rejected');
+      },
+      sendPhoto: async (
+        _chatId: number,
+        photo: string | InputFile,
+        options: Record<string, unknown> = {},
+      ) => {
+        sentPhotos.push(String(photo));
+        return {
+          message_id: 920 + sentPhotos.length,
+          date: 1_778_800_020 + sentPhotos.length,
+          caption:
+            typeof options.caption === 'string' ? options.caption : undefined,
+        };
+      },
+    },
+    { sendRichMessage: async () => ({ message_id: 1, date: 1 }) },
+    { saveMessage: async () => undefined },
+    999,
+    { sleep: async () => undefined },
+  );
+
+  const result = await service.send(-100, {
+    items: [
+      {
+        plainText: 'photos',
+        attachments: [
+          {
+            type: 'photo',
+            fileIdOrUrl: 'https://images.example.com/one.jpg',
+          },
+          {
+            type: 'photo',
+            fileIdOrUrl: 'https://images.example.com/two.jpg',
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.deepEqual(sentPhotos, [
+    'https://images.example.com/one.jpg',
+    'https://images.example.com/two.jpg',
+  ]);
+  assert.equal(result.deliveries.length, 2);
+  assert.match(result.deliveries[0]?.fallbackReason ?? '', /album rejected/);
+});
+
+test('send keeps partial individual photo fallback successes instead of throwing total failure', async () => {
+  const service = new TelegramRichDeliveryService(
+    {
+      sendChatAction: async () => undefined,
+      sendMessage: async () => {
+        throw new Error('unused');
+      },
+      sendMediaGroup: async () => {
+        throw new Error('album rejected');
+      },
+      sendPhoto: async (
+        _chatId: number,
+        photo: string | InputFile,
+        options: Record<string, unknown> = {},
+      ) => {
+        if (String(photo).includes('two.jpg')) {
+          throw new Error('second photo rejected');
+        }
+
+        return {
+          message_id: 930,
+          date: 1_778_800_030,
+          caption:
+            typeof options.caption === 'string' ? options.caption : undefined,
+        };
+      },
+    },
+    { sendRichMessage: async () => ({ message_id: 1, date: 1 }) },
+    { saveMessage: async () => undefined },
+    999,
+    { sleep: async () => undefined },
+  );
+
+  const result = await service.send(-100, {
+    items: [
+      {
+        plainText: 'photos',
+        attachments: [
+          {
+            type: 'photo',
+            fileIdOrUrl: 'https://images.example.com/one.jpg',
+          },
+          {
+            type: 'photo',
+            fileIdOrUrl: 'https://images.example.com/two.jpg',
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.deepEqual(result.deliveries, [
+    {
+      telegramId: 930,
+      format: 'photo',
+      fallbackReason: 'media_group_failed: album rejected',
+    },
+  ]);
+});
+
+test('send propagates ordinary individual attachment failures outside album fallback', async () => {
+  const service = new TelegramRichDeliveryService(
+    {
+      sendChatAction: async () => undefined,
+      sendMessage: async () => {
+        throw new Error('unused');
+      },
+      sendPhoto: async () => ({
+        message_id: 940,
+        date: 1_778_800_040,
+      }),
+      sendDocument: async () => {
+        throw new Error('document rejected');
+      },
+    },
+    { sendRichMessage: async () => ({ message_id: 1, date: 1 }) },
+    { saveMessage: async () => undefined },
+    999,
+    { sleep: async () => undefined },
+  );
+
+  await assert.rejects(
+    service.send(-100, {
+      items: [
+        {
+          plainText: 'mixed',
+          attachments: [
+            {
+              type: 'photo',
+              fileIdOrUrl: 'https://images.example.com/one.jpg',
+            },
+            {
+              type: 'document',
+              fileIdOrUrl: 'https://files.example.com/two.pdf',
+            },
+          ],
+        },
+      ],
+    }),
+    /document rejected/,
+  );
 });
 
 test('send rejects unsupported generated image data URL attachments', async () => {

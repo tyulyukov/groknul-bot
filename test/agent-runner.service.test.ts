@@ -514,6 +514,100 @@ test('AgentRunner stops after a generated image is sent', async () => {
   assert.deepEqual(result.toolsUsed, ['generate_image']);
 });
 
+test('AgentRunner stops after a photo search task queues visible progress', async () => {
+  const client: AgentChatClient = {
+    complete: async () => ({
+      message: {
+        role: 'assistant',
+        tool_calls: [
+          {
+            id: 'call_photo_search',
+            type: 'function',
+            function: {
+              name: 'send_photo_search',
+              arguments: '{"query":"brabus b63","requiredTerms":["brabus"]}',
+            },
+          },
+        ],
+      },
+    }),
+  };
+  const registry: AgentToolRegistry = {
+    getToolDefinitions: () => [],
+    execute: async () => ({
+      status: 'ok',
+      photoTask: { status: 'queued', query: 'brabus b63' },
+      deliveries: [{ telegramId: 888, format: 'plain' }],
+    }),
+  };
+  const runner = new AgentRunner(client, registry, {
+    model: 'agent-model',
+    maxToolCalls: 10,
+  });
+
+  const result = await runner.run({
+    chatTelegramId: -100,
+    triggerMessageId: 123,
+    botUsername: 'groknul_bot',
+  });
+
+  assert.equal(result.status, 'sent');
+  assert.deepEqual(result.toolsUsed, ['send_photo_search']);
+});
+
+test('AgentRunner includes active photo task context in the model input', async () => {
+  const seenUserPayloads: unknown[] = [];
+  const client: AgentChatClient = {
+    complete: async (input) => {
+      seenUserPayloads.push(JSON.parse(input.messages[1]?.content ?? '{}'));
+      return {
+        message: {
+          role: 'assistant',
+          content: 'still searching',
+        },
+      };
+    },
+  };
+  const registry: AgentToolRegistry = {
+    getToolDefinitions: () => [],
+    execute: async () => {
+      throw new Error('unused');
+    },
+  };
+  const runner = new AgentRunner(client, registry, {
+    model: 'agent-model',
+    maxToolCalls: 10,
+  });
+
+  await runner.run({
+    chatTelegramId: -100,
+    triggerMessageId: 124,
+    botUsername: 'groknul_bot',
+    activePhotoTask: {
+      id: 'photo-1',
+      chatTelegramId: -100,
+      triggerMessageId: 123,
+      query: 'brabus b63',
+      status: 'searching',
+      startedAt: '2026-07-01T10:00:00.000Z',
+      updatedAt: '2026-07-01T10:00:05.000Z',
+    },
+  });
+
+  assert.deepEqual(
+    (seenUserPayloads[0] as { activePhotoTask?: unknown }).activePhotoTask,
+    {
+      id: 'photo-1',
+      chatTelegramId: -100,
+      triggerMessageId: 123,
+      query: 'brabus b63',
+      status: 'searching',
+      startedAt: '2026-07-01T10:00:00.000Z',
+      updatedAt: '2026-07-01T10:00:05.000Z',
+    },
+  );
+});
+
 test('AgentRunner stops after a reaction-only tool call', async () => {
   let completions = 0;
   const client: AgentChatClient = {

@@ -26,6 +26,7 @@ import { CodexAiClient } from './codex-ai-client.service.js';
 import { CodexOAuthService } from './codex-oauth.service.js';
 import { CodexTelegramCommandService } from './codex-telegram-command.service.js';
 import { RuntimeCodexOAuthStatusProvider } from './codex-oauth-status.service.js';
+import { PhotoTaskRegistry } from './photo-task-registry.service.js';
 import {
   buildTelegramPollContext,
   deriveTelegramMessageContent,
@@ -77,6 +78,7 @@ export class TelegramBotService {
   private readonly agentResponseService: AgentResponseService;
   private readonly mediaContextService: MediaContextService;
   private readonly codexOAuthStatus: RuntimeCodexOAuthStatusProvider;
+  private readonly photoTasks: PhotoTaskRegistry;
   private runnerHandle?: RunnerHandle;
   private botUsername: string = '';
 
@@ -93,6 +95,7 @@ export class TelegramBotService {
     );
     this.aiService = new AiService(this.aiClient);
     this.codexOAuthStatus = new RuntimeCodexOAuthStatusProvider();
+    this.photoTasks = new PhotoTaskRegistry();
     this.contextToolService = new ContextToolService(
       database,
       this.aiService,
@@ -113,6 +116,7 @@ export class TelegramBotService {
       new RawTelegramApiClient(config.telegram.apiKey),
       new SearxngSearchService(config.searxng),
       this.codexOAuthStatus,
+      this.photoTasks,
     );
     this.setupMiddleware();
     this.setupHandlers();

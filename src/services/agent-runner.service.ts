@@ -70,6 +70,16 @@ export interface AgentReplyContextMessage {
   reactions?: string[];
 }
 
+export interface AgentPhotoTaskContext {
+  id: string;
+  chatTelegramId: number;
+  triggerMessageId: number;
+  query: string;
+  status: string;
+  startedAt: string;
+  updatedAt: string;
+}
+
 export interface AgentRunInput {
   chatTelegramId: number;
   triggerMessageId: number;
@@ -78,6 +88,7 @@ export interface AgentRunInput {
   chatMemories?: string[];
   replyContext?: AgentReplyContextMessage[];
   currentMessageDetails?: AgentReplyContextMessage;
+  activePhotoTask?: AgentPhotoTaskContext;
 }
 
 export interface AgentRunResult {
@@ -118,6 +129,9 @@ export class AgentRunner {
     }
     if (input.currentMessageDetails) {
       userContext.currentMessageDetails = input.currentMessageDetails;
+    }
+    if (input.activePhotoTask) {
+      userContext.activePhotoTask = input.activePhotoTask;
     }
 
     const messages: AgentChatMessage[] = [
@@ -176,7 +190,9 @@ export class AgentRunner {
         });
 
         if (
-          (toolName === 'send' || toolName === 'generate_image') &&
+          (toolName === 'send' ||
+            toolName === 'generate_image' ||
+            toolName === 'send_photo_search') &&
           this.isSuccessfulSendResult(result) &&
           args.continueAfter !== true
         ) {
@@ -321,6 +337,7 @@ Context rules:
 - The current message is the latest user message that tagged you or replied to you.
 - Focus on the current message. Prior messages are context, not tasks.
 - currentMessageDetails, when present, is everything stored about the trigger message: author, text, media/image summary in context, file name, type, reply metadata, and reactions.
+- activePhotoTask, when present, is a previous real-photo request still running in this chat. If the current user asks about that photo, say grounded status like "still searching/loading/sending" based on the status and query. Do not pretend the photo is already sent unless the task is absent.
 - Treat a message's context field as real message content. For photos/images it is the vision summary of what was in the image.
 - chatMemories, when present in the input JSON, are durable memories already loaded for this chat. Use them silently when relevant.
 - replyContext, when present in the input JSON, is the Telegram reply chain for the current message: item 0 is the current trigger, following items are the messages it replies to.
@@ -334,7 +351,8 @@ Context rules:
 - Do not request huge context. If a tool returns too_large, make a narrower follow-up tool call.
 - Use web_search only when the user asks for external/time-sensitive info or you genuinely need web knowledge.
 - When using web_search for a short reply-based request, include the concrete entity/topic from replyContext in the query.
-- Use generate_image only when the user specifically asks for an image, picture, visual meme, or similar generated visual. Do not generate images for ordinary questions or casual banter.
+- Use send_photo_search for real existing photos of cars, people, places, products, cards, screenshots, or other external/reference subjects. Pass a concrete search query and requiredTerms for the exact entity. If unsure, ask instead of guessing.
+- Use generate_image only when the user specifically asks to create/generate/draw an imagined image, visual meme, or synthetic visual. Do not use generated images when the user wants a real existing photo.
 - No visible reply is a valid outcome. If the user only acknowledges/laughs/reacts after your joke or answer and there is nothing useful to add, use react_to_message or ignore_message instead of sending a cringe filler bubble.
 
 Personality:
@@ -355,6 +373,7 @@ Telegram style:
 - For casual chat, use a Poke-like bursty style: 1-${MAX_SEND_ITEMS} short message bubbles when it feels natural instead of one polished essay.
 - Never send more than ${MAX_SEND_ITEMS} bubbles for one reply.
 - Use the send tool for visible replies, especially when sending multiple bubbles.
+- Use send_photo_search for real photos; it may continue in the background after sending a tiny progress reply.
 - Use generate_image to send one generated photo with a short caption when the user explicitly requests a generated image or meme.
 - Prefer react_to_message over text for pure emotional responses. Use continueAfter=true only when you truly need to react and then send text.
 - Use ignore_message when silence is the most human move. Examples: someone laughs at your joke, says "LMAO", sends a low-context meme after your answer, or adds a tiny acknowledgement that needs no follow-up.

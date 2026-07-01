@@ -1,4 +1,5 @@
 import { InputFile } from 'grammy';
+import type { InputMediaPhoto } from 'grammy/types';
 import { parseGeneratedImageDataUrl } from '../common/generated-image.js';
 import { markdownToTelegramHtml } from '../utils/markdown-to-telegram-html.js';
 import type { RawTelegramApiClientLike } from './raw-telegram-api-client.service.js';
@@ -64,6 +65,7 @@ export const buildGeneratedPhotoPayload = (
 });
 
 export const MAX_SEND_ITEMS = 3;
+export const MAX_MEDIA_GROUP_ATTACHMENTS = 10;
 
 export interface DeliveryResult {
   telegramId: number;
@@ -83,6 +85,11 @@ export interface TelegramApiLike {
     photo: InputFile | string,
     options?: Record<string, unknown>,
   ) => Promise<{ message_id: number; date: number; caption?: string }>;
+  sendMediaGroup?: (
+    chatId: number,
+    media: readonly InputMediaPhoto[],
+    options?: Record<string, unknown>,
+  ) => Promise<Array<{ message_id: number; date: number; caption?: string }>>;
   sendDocument?: (
     chatId: number,
     document: InputFile | string,
@@ -240,13 +247,11 @@ export class TelegramRichDeliveryService {
     }
 
     if (item.attachments?.length) {
-      const results: DeliveryResult[] = [];
-      for (const attachment of item.attachments) {
-        results.push(
-          await this.sendAttachment(chatTelegramId, item, attachment),
-        );
+      if (this.canSendPhotoAlbum(item.attachments)) {
+        return this.sendPhotoAlbum(chatTelegramId, item, item.attachments);
       }
-      return results;
+
+      return this.sendAttachmentsIndividually(chatTelegramId, item);
     }
 
     return [await this.sendText(chatTelegramId, item)];
@@ -330,12 +335,9 @@ export class TelegramRichDeliveryService {
     chatTelegramId: number,
     item: SendItem,
     attachment: SendAttachment,
+    fallbackReason?: string,
   ): Promise<DeliveryResult> {
-    const caption =
-      attachment.captionRichMarkdown ??
-      attachment.captionPlainText ??
-      item.richMarkdown ??
-      item.plainText;
+    const caption = this.attachmentCaption(item, attachment);
     const htmlCaption = markdownToTelegramHtml(caption).slice(0, 1024);
     const options = {
       ...this.replyOptions(item),
@@ -360,9 +362,132 @@ export class TelegramRichDeliveryService {
       finalText: htmlCaption,
       contentText: caption,
       messageType: format,
+      fallbackReason,
     });
 
-    return { telegramId: sent.message_id, format };
+    return { telegramId: sent.message_id, format, fallbackReason };
+  }
+
+  private async sendPhotoAlbum(
+    chatTelegramId: number,
+    item: SendItem,
+    attachments: SendAttachment[],
+  ): Promise<DeliveryResult[]> {
+    const caption = this.attachmentCaption(item, attachments[0]!);
+    const htmlCaption = markdownToTelegramHtml(caption).slice(0, 1024);
+    const media = attachments.map((attachment, index): InputMediaPhoto => {
+      const base: InputMediaPhoto = {
+        type: 'photo',
+        media: this.toTelegramUpload(attachment.fileIdOrUrl),
+      };
+
+      return index === 0
+        ? {
+            ...base,
+            caption: htmlCaption,
+            parse_mode: 'HTML',
+          }
+        : base;
+    });
+
+    try {
+      const sent = await this.api.sendMediaGroup!(
+        chatTelegramId,
+        media,
+        this.replyOptions(item),
+      );
+
+      const deliveries: DeliveryResult[] = [];
+      for (let index = 0; index < sent.length; index += 1) {
+        const message = sent[index]!;
+        const isCaptioned = index === 0;
+        await this.persist(chatTelegramId, item, message, {
+          format: 'photo',
+          finalText: isCaptioned ? htmlCaption : '',
+          contentText: isCaptioned ? caption : '',
+          messageType: 'photo',
+        });
+        deliveries.push({ telegramId: message.message_id, format: 'photo' });
+      }
+
+      return deliveries;
+    } catch (error) {
+      const fallbackReason = `media_group_failed: ${this.errorMessage(error)}`;
+      return this.sendAttachmentsIndividually(
+        chatTelegramId,
+        item,
+        fallbackReason,
+        { allowPartialSuccess: true },
+      );
+    }
+  }
+
+  private async sendAttachmentsIndividually(
+    chatTelegramId: number,
+    item: SendItem,
+    fallbackReason?: string,
+    options: { allowPartialSuccess?: boolean } = {},
+  ): Promise<DeliveryResult[]> {
+    const results: DeliveryResult[] = [];
+    const errors: unknown[] = [];
+    for (const attachment of item.attachments ?? []) {
+      if (options.allowPartialSuccess) {
+        try {
+          results.push(
+            await this.sendAttachment(
+              chatTelegramId,
+              item,
+              attachment,
+              fallbackReason,
+            ),
+          );
+        } catch (error) {
+          errors.push(error);
+        }
+      } else {
+        results.push(
+          await this.sendAttachment(
+            chatTelegramId,
+            item,
+            attachment,
+            fallbackReason,
+          ),
+        );
+      }
+    }
+
+    if (results.length > 0) return results;
+    if (errors.length > 0) {
+      const firstError = errors[0];
+      throw firstError instanceof Error
+        ? firstError
+        : new Error(String(firstError));
+    }
+
+    return results;
+  }
+
+  private canSendPhotoAlbum(
+    attachments: SendAttachment[],
+  ): attachments is SendAttachment[] {
+    return (
+      typeof this.api.sendMediaGroup === 'function' &&
+      attachments.length >= 2 &&
+      attachments.length <= MAX_MEDIA_GROUP_ATTACHMENTS &&
+      attachments.every((attachment) => attachment.type === 'photo')
+    );
+  }
+
+  private attachmentCaption(
+    item: SendItem,
+    attachment: SendAttachment,
+  ): string {
+    return (
+      attachment.captionRichMarkdown ??
+      attachment.captionPlainText ??
+      item.richMarkdown ??
+      item.plainText
+    );
   }
 
   private async sendPoll(
