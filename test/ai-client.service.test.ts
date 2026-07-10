@@ -145,7 +145,7 @@ test('AiClient uses Codex first for OpenAI models', async () => {
   );
 
   const result = await client.completeRaw({
-    model: 'openai/gpt-5.5',
+    model: 'openai/gpt-5.6-sol',
     messages: [{ role: 'user', content: 'hello' }],
   });
 
@@ -177,7 +177,7 @@ test('AiClient falls back to OpenRouter when Codex fails', async () => {
   );
 
   const result = await client.completeRaw({
-    model: 'openai/gpt-5.5',
+    model: 'openai/gpt-5.6-sol',
     messages: [{ role: 'user', content: 'hello' }],
   });
 
@@ -205,7 +205,7 @@ test('AiClient falls back to OpenRouter when Codex auth is not connected', async
   );
 
   const result = await client.completeRaw({
-    model: 'openai/gpt-5.5',
+    model: 'openai/gpt-5.6-sol',
     messages: [{ role: 'user', content: 'hello' }],
   });
 
@@ -232,7 +232,7 @@ test('AiClient falls back to OpenRouter when Codex refresh fails', async () => {
   );
 
   const result = await client.completeRaw({
-    model: 'openai/gpt-5.5',
+    model: 'openai/gpt-5.6-sol',
     messages: [{ role: 'user', content: 'hello' }],
   });
 
@@ -259,7 +259,7 @@ test('AiClient falls back to OpenRouter on Codex network TypeErrors', async () =
   );
 
   const result = await client.completeRaw({
-    model: 'openai/gpt-5.5',
+    model: 'openai/gpt-5.6-sol',
     messages: [{ role: 'user', content: 'hello' }],
   });
 
@@ -287,7 +287,7 @@ test('AiClient does not fall back to OpenRouter on Codex programmer TypeErrors',
 
   await assert.rejects(
     client.completeRaw({
-      model: 'openai/gpt-5.5',
+      model: 'openai/gpt-5.6-sol',
       messages: [{ role: 'user', content: 'hello' }],
     }),
     /Cannot read properties/,
@@ -318,7 +318,7 @@ test('AiClient does not fall back to OpenRouter on non-outage Codex errors', asy
 
   await assert.rejects(
     client.completeRaw({
-      model: 'openai/gpt-5.5',
+      model: 'openai/gpt-5.6-sol',
       messages: [{ role: 'user', content: 'hello' }],
     }),
     /bad request/,

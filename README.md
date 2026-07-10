@@ -30,8 +30,8 @@ The name is inspired by Twitter/X’s Grok. "groknul" also playfully echoes the 
 - **Database**: MongoDB (messages, users, memories, summaries)
 - **Local media processing**: `faster-whisper` + `ffmpeg` in Docker for transcripts and video frame extraction
 - **AI (OpenRouter)**:
-  - Reply: `openai/gpt-5.5`
-  - Agent/router: `openai/gpt-5.5`
+  - Reply: `openai/gpt-5.6-sol`
+  - Agent/router: `openai/gpt-5.6-sol`
   - Image generation: `openai/gpt-5.4-image-2`
   - Summarization & Vision: `openai/gpt-5.4-mini`
   - Optional Codex OAuth first for `openai/...` models, with OpenRouter fallback
