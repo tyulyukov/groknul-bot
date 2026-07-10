@@ -53,7 +53,7 @@ test('CodexAiClient converts chat completion params to Codex Responses requests'
   );
 
   const result = await client.completeRaw({
-    model: 'openai/gpt-5.5',
+    model: 'openai/gpt-5.6-sol',
     messages: [
       { role: 'system', content: 'system rules' },
       {
@@ -106,7 +106,7 @@ test('CodexAiClient converts chat completion params to Codex Responses requests'
     temperature?: number;
     top_p?: number;
   };
-  assert.equal(body.model, 'gpt-5.5');
+  assert.equal(body.model, 'gpt-5.6-sol');
   assert.equal(body.store, false);
   assert.equal(body.instructions, 'system rules');
   assert.deepEqual(body.input[0]?.content, [
@@ -136,7 +136,7 @@ test('CodexAiClient declines unsupported chat completion parameters', async () =
 
   await assert.rejects(
     client.completeRaw({
-      model: 'openai/gpt-5.5',
+      model: 'openai/gpt-5.6-sol',
       messages: [{ role: 'user', content: 'hello' }],
       presence_penalty: 0.4,
       frequency_penalty: 0.6,
@@ -181,7 +181,7 @@ test('CodexAiClient refreshes auth and retries once after a 401', async () => {
   );
 
   const result = await client.completeRaw({
-    model: 'openai/gpt-5.5',
+    model: 'openai/gpt-5.6-sol',
     messages: [{ role: 'user', content: 'hello' }],
   });
 
@@ -208,7 +208,7 @@ test('CodexAiClient maps Codex function-call SSE events to chat completions', as
   );
 
   const result = await client.completeRaw({
-    model: 'openai/gpt-5.5',
+    model: 'openai/gpt-5.6-sol',
     messages: [{ role: 'user', content: 'search please' }],
   });
 
@@ -243,7 +243,7 @@ test('CodexAiClient rejects malformed function-call SSE events', async () => {
 
   await assert.rejects(
     client.completeRaw({
-      model: 'openai/gpt-5.5',
+      model: 'openai/gpt-5.6-sol',
       messages: [{ role: 'user', content: 'search please' }],
     }),
     CodexProviderUnavailableError,
@@ -264,7 +264,7 @@ test('CodexAiClient rejects malformed successful streams without usable output',
 
   await assert.rejects(
     client.completeRaw({
-      model: 'openai/gpt-5.5',
+      model: 'openai/gpt-5.6-sol',
       messages: [{ role: 'user', content: 'hello' }],
     }),
     CodexProviderUnavailableError,

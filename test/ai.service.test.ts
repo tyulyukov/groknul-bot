@@ -24,7 +24,7 @@ test('generateAmbientInterjection uses reply model with low reasoning', async ()
   const result = await service.generateAmbientInterjection([], 'groknul_bot');
 
   assert.equal(result, 'solid point');
-  assert.equal(seenParams?.model, 'openai/gpt-5.5');
+  assert.equal(seenParams?.model, 'openai/gpt-5.6-sol');
   assert.deepEqual(seenParams?.reasoning, { effort: 'low' });
 });
 

@@ -172,8 +172,8 @@ export const createConfig = (env: EnvSource): Config => ({
   openRouter: {
     apiKey: getRequiredEnvVar(env, 'OPENROUTER_API_KEY'),
     models: {
-      reply: env.OPENROUTER_REPLY_MODEL || 'openai/gpt-5.5',
-      agent: env.OPENROUTER_AGENT_MODEL || 'openai/gpt-5.5',
+      reply: env.OPENROUTER_REPLY_MODEL || 'openai/gpt-5.6-sol',
+      agent: env.OPENROUTER_AGENT_MODEL || 'openai/gpt-5.6-sol',
       image: env.OPENROUTER_IMAGE_MODEL || 'openai/gpt-5.4-image-2',
       summary: env.OPENROUTER_SUMMARY_MODEL || 'openai/gpt-5.4-mini',
       vision: env.OPENROUTER_VISION_MODEL || 'openai/gpt-5.4-mini',
