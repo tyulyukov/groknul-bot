@@ -406,6 +406,130 @@ test('get_messages_before proxies context lookup before a trigger message', asyn
   assert.deepEqual(result, { status: 'ok', messages: [] });
 });
 
+test('search_messages proxies the continuation cursor', async () => {
+  let seenArgs: unknown[] | undefined;
+  const registry = new TelegramToolRegistry({
+    chatTelegramId: -100,
+    botUserTelegramId: 999,
+    api: {
+      deleteMessage: async () => true,
+      editMessageText: async () => true,
+      setMessageReaction: async () => true,
+    },
+    delivery: {} as never,
+    imageService: disabledImageService,
+    contextTools: {
+      searchMessages: async (...args: unknown[]) => {
+        seenArgs = args;
+        return {
+          status: 'ok',
+          messages: [],
+          page: { hasMore: false },
+        };
+      },
+    } as never,
+    searchService: {} as never,
+    messageModel: {
+      findByMessageTelegramId: async () => null,
+    } as never,
+  });
+
+  await registry.execute('search_messages', {
+    since: '2026-06-01',
+    beforeMessageId: 456,
+    limit: 30,
+  });
+
+  assert.deepEqual(seenArgs, [
+    -100,
+    {
+      query: undefined,
+      since: '2026-06-01',
+      until: undefined,
+      fromUser: undefined,
+      beforeMessageId: 456,
+      limit: 30,
+    },
+  ]);
+});
+
+test('analyze_chat_archive delegates a bounded read-only worker task', async () => {
+  let seenInput: unknown;
+  let analysisCalls = 0;
+  const registry = new TelegramToolRegistry({
+    chatTelegramId: -100,
+    botUserTelegramId: 999,
+    api: {
+      deleteMessage: async () => true,
+      editMessageText: async () => true,
+      setMessageReaction: async () => true,
+    },
+    delivery: {} as never,
+    imageService: disabledImageService,
+    contextTools: {} as never,
+    searchService: {} as never,
+    archiveAnalyzer: {
+      analyze: async (input) => {
+        analysisCalls += 1;
+        seenInput = input;
+        return {
+          status: 'completed',
+          report: 'ranking with [message:123]',
+          toolsUsed: ['search_archive_messages'],
+          coverage: {
+            messagesRead: 30,
+            pagesRead: 1,
+            messageBudgetReached: false,
+            complete: true,
+            pendingScopes: 0,
+          },
+        };
+      },
+    },
+    messageModel: {
+      findByMessageTelegramId: async () => null,
+    } as never,
+  });
+
+  assert.equal(
+    registry
+      .getToolDefinitions()
+      .some((tool) => tool.function.name === 'analyze_chat_archive'),
+    true,
+  );
+
+  const result = await registry.execute('analyze_chat_archive', {
+    task: 'rank World Cup predictions',
+    since: '2026-05-01',
+    until: '2026-07-20',
+  });
+
+  assert.deepEqual(seenInput, {
+    chatTelegramId: -100,
+    task: 'rank World Cup predictions',
+    since: '2026-05-01',
+    until: '2026-07-20',
+  });
+  assert.deepEqual(result, {
+    status: 'completed',
+    report: 'ranking with [message:123]',
+    toolsUsed: ['search_archive_messages'],
+    coverage: {
+      messagesRead: 30,
+      pagesRead: 1,
+      messageBudgetReached: false,
+      complete: true,
+      pendingScopes: 0,
+    },
+  });
+
+  const repeated = await registry.execute('analyze_chat_archive', {
+    task: 'run it again',
+  });
+  assert.equal(analysisCalls, 1);
+  assert.deepEqual(repeated, { status: 'already_used' });
+});
+
 test('get_chat_stats proxies chat accounting lookup', async () => {
   let seenArgs: unknown[] | undefined;
   const registry = new TelegramToolRegistry({

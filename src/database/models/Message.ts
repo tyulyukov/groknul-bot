@@ -559,6 +559,7 @@ export class MessageModel {
     since?: Date;
     until?: Date;
     fromUserTelegramId?: number;
+    beforeMessageTelegramId?: number;
     limit: number;
   }): Promise<PopulatedMessage[]> {
     const match: Record<string, unknown> = {
@@ -580,8 +581,12 @@ export class MessageModel {
       match.userTelegramId = input.fromUserTelegramId;
     }
 
+    if (typeof input.beforeMessageTelegramId === 'number') {
+      match.telegramId = { $lt: input.beforeMessageTelegramId };
+    }
+
     const pipeline = this.buildPipeline(match, {
-      sort: { sentAt: -1 },
+      sort: { telegramId: -1 },
       limit: input.limit,
     });
 
@@ -748,6 +753,10 @@ export class MessageModel {
       {
         keys: { chatTelegramId: 1, sentAt: -1 },
         description: 'Main query index for getRecentMessages',
+      },
+      {
+        keys: { chatTelegramId: 1, telegramId: -1 },
+        description: 'Archive cursor pagination index',
       },
       {
         keys: { userTelegramId: 1 },

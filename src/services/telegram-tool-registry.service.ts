@@ -24,6 +24,7 @@ import {
 } from './telegram-rich-delivery.service.js';
 import { markdownToTelegramHtml } from '../utils/markdown-to-telegram-html.js';
 import { MESSAGE_TYPE } from '../common/message-types.js';
+import type { ArchiveAnalyzer } from './archive-analysis.service.js';
 
 export interface TelegramActionApi {
   deleteMessage(chatId: number, messageId: number): Promise<unknown>;
@@ -56,6 +57,7 @@ interface TelegramToolRegistryInput {
   codexOAuthStatus?: CodexOAuthStatusProvider;
   contextTools: ContextToolService;
   searchService: SearxngSearchService;
+  archiveAnalyzer?: ArchiveAnalyzer;
   messageModel: Pick<
     MessageModel,
     | 'findByMessageTelegramId'
@@ -69,6 +71,7 @@ interface TelegramToolRegistryInput {
 
 export class TelegramToolRegistry implements AgentToolRegistry {
   private usedReplyMetadata = false;
+  private archiveAnalysisUsed = false;
   private readonly codexOAuthStatus: CodexOAuthStatusProvider;
 
   constructor(private readonly input: TelegramToolRegistryInput) {
@@ -161,7 +164,7 @@ export class TelegramToolRegistry implements AgentToolRegistry {
       ),
       this.tool(
         'search_messages',
-        'Fetch persisted chat messages by optional text query, date range, author, and limit. Query is optional; use since/until with limit to fetch messages from a period of time.',
+        'Fetch one page of persisted chat messages by optional text query, date range, author, cursor, and limit. Continue with nextBeforeMessageId while hasMore is true.',
         {
           type: 'object',
           properties: {
@@ -169,10 +172,28 @@ export class TelegramToolRegistry implements AgentToolRegistry {
             since: { type: 'string' },
             until: { type: 'string' },
             fromUser: { type: 'number' },
+            beforeMessageId: { type: 'number' },
             limit: { type: 'number' },
           },
         },
       ),
+      ...(this.input.archiveAnalyzer
+        ? [
+            this.tool(
+              'analyze_chat_archive',
+              'Delegate a broad, evidence-heavy archive research task to a read-only worker with a larger independent budget. Use for comparisons across many people/messages, historical claim or prediction audits, rankings, and tasks requiring exhaustive pagination plus external verification. Call once with the complete task and known date bounds; use the returned evidence report to answer the user.',
+              {
+                type: 'object',
+                properties: {
+                  task: { type: 'string' },
+                  since: { type: 'string' },
+                  until: { type: 'string' },
+                },
+                required: ['task'],
+              },
+            ),
+          ]
+        : []),
       this.tool(
         'get_raw_message',
         'Fetch the bounded raw stored Telegram update payload for one message id in this chat. Use this when normalized context omits Telegram fields you need, such as poll internals or new message-type fields. This reads stored payloads only; it cannot fetch arbitrary Telegram history.',
@@ -350,9 +371,12 @@ export class TelegramToolRegistry implements AgentToolRegistry {
             since: this.stringArg(args.since),
             until: this.stringArg(args.until),
             fromUser: this.optionalNumberArg(args.fromUser),
+            beforeMessageId: this.optionalNumberArg(args.beforeMessageId),
             limit: this.optionalNumberArg(args.limit),
           },
         );
+      case 'analyze_chat_archive':
+        return this.analyzeChatArchive(args);
       case 'get_raw_message':
         return this.input.contextTools.getRawMessage(
           this.input.chatTelegramId,
@@ -476,6 +500,27 @@ export class TelegramToolRegistry implements AgentToolRegistry {
       this.input.chatTelegramId,
       this.onlyFirstItemCanReply(payload),
     );
+  }
+
+  private async analyzeChatArchive(
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    if (!this.input.archiveAnalyzer) return { status: 'disabled' };
+    if (this.archiveAnalysisUsed) return { status: 'already_used' };
+
+    const task = this.stringArg(args.task);
+    if (!task) {
+      return { status: 'invalid_args', reason: 'task_is_required' };
+    }
+
+    this.archiveAnalysisUsed = true;
+
+    return this.input.archiveAnalyzer.analyze({
+      chatTelegramId: this.input.chatTelegramId,
+      task,
+      since: this.stringArg(args.since),
+      until: this.stringArg(args.until),
+    });
   }
 
   private async generateImage(args: Record<string, unknown>): Promise<unknown> {
