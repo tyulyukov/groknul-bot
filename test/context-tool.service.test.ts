@@ -146,6 +146,81 @@ test('getRecentMessages returns too_large when requested context exceeds hard ca
   });
 });
 
+test('searchMessages returns a stable continuation cursor', async () => {
+  let seenInput: unknown;
+  const messages = [103, 102, 101].map((telegramId) => ({
+    telegramId,
+    chatTelegramId: -100,
+    userTelegramId: 777,
+    user: { username: 'maksym' },
+    text: `prediction ${telegramId}`,
+    sentAt: new Date(`2026-06-0${telegramId - 100}T00:00:00.000Z`),
+    edits: [],
+    reactions: [],
+    messageType: 'text' as const,
+    payload: {},
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  }));
+  const service = new ContextToolService(
+    {
+      getMessageModel: () => ({
+        getRecentMessages: async () => [],
+        getMessagesBefore: async () => [],
+        searchMessages: async (input: unknown) => {
+          seenInput = input;
+          return messages as never;
+        },
+        findByMessageTelegramId: async () => null,
+        findRawByMessageTelegramId: async () => null,
+        countMessages: async () => 0,
+        getChatStats: async () => {
+          throw new Error('unused');
+        },
+      }),
+      getMemoryModel: () => ({
+        searchByChat: async () => [],
+        addMemory: async () => {
+          throw new Error('unused');
+        },
+        deleteById: async () => false,
+        listByChat: async () => [],
+      }),
+      getSummaryModel: () => ({
+        getByLevelAscending: async () => [],
+        getCount: async () => 0,
+      }),
+    },
+    { summarizeText: async () => 'summary' },
+    { maxMessages: 50, maxChars: 10_000, maxResults: 20 },
+  );
+
+  const result = await service.searchMessages(-100, {
+    since: '2026-06-01T00:00:00.000Z',
+    beforeMessageId: 200,
+    limit: 2,
+  });
+
+  assert.deepEqual(seenInput, {
+    chatTelegramId: -100,
+    query: undefined,
+    since: new Date('2026-06-01T00:00:00.000Z'),
+    until: undefined,
+    fromUserTelegramId: undefined,
+    beforeMessageTelegramId: 200,
+    limit: 3,
+  });
+  assert.equal(result.status, 'ok');
+  assert.deepEqual(
+    result.messages?.map((message) => message.id),
+    [103, 102],
+  );
+  assert.deepEqual(result.page, {
+    hasMore: true,
+    nextBeforeMessageId: 102,
+  });
+});
+
 test('getChatDigest reads highest-level summaries before recent level-0 summaries', async () => {
   const service = new ContextToolService(
     {

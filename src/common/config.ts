@@ -33,6 +33,7 @@ export interface Config {
     models: {
       reply: string;
       agent: string;
+      archiveAgent: string;
       image: string;
       summary: string;
       vision: string;
@@ -57,6 +58,11 @@ export interface Config {
   };
   agent: {
     maxToolCalls: number;
+    archive: {
+      maxToolCalls: number;
+      maxMessages: number;
+      maxTokens: number;
+    };
     context: {
       maxMessages: number;
       maxChars: number;
@@ -174,6 +180,7 @@ export const createConfig = (env: EnvSource): Config => ({
     models: {
       reply: env.OPENROUTER_REPLY_MODEL || 'openai/gpt-5.6-sol',
       agent: env.OPENROUTER_AGENT_MODEL || 'openai/gpt-5.6-sol',
+      archiveAgent: env.OPENROUTER_ARCHIVE_AGENT_MODEL || 'openai/gpt-5.6-luna',
       image: env.OPENROUTER_IMAGE_MODEL || 'openai/gpt-5.4-image-2',
       summary: env.OPENROUTER_SUMMARY_MODEL || 'openai/gpt-5.4-mini',
       vision: env.OPENROUTER_VISION_MODEL || 'openai/gpt-5.4-mini',
@@ -182,8 +189,7 @@ export const createConfig = (env: EnvSource): Config => ({
   codex: {
     ownerTelegramId: 870_452_692,
     issuer: env.CODEX_OAUTH_ISSUER || 'https://auth.openai.com',
-    clientId:
-      env.CODEX_OAUTH_CLIENT_ID || 'app_EMoamEEZ73f0CkXaXp7hrann',
+    clientId: env.CODEX_OAUTH_CLIENT_ID || 'app_EMoamEEZ73f0CkXaXp7hrann',
     chatgptBaseUrl:
       env.CODEX_CHATGPT_BASE_URL || 'https://chatgpt.com/backend-api',
     devicePollMaxMs: parseInteger(
@@ -204,6 +210,11 @@ export const createConfig = (env: EnvSource): Config => ({
   },
   agent: {
     maxToolCalls: parseInteger(env, 'AGENT_MAX_TOOL_CALLS', 10),
+    archive: {
+      maxToolCalls: parseInteger(env, 'AGENT_ARCHIVE_MAX_TOOL_CALLS', 50),
+      maxMessages: parseInteger(env, 'AGENT_ARCHIVE_MAX_MESSAGES', 1_000),
+      maxTokens: parseInteger(env, 'AGENT_ARCHIVE_MAX_TOKENS', 2_200),
+    },
     context: {
       maxMessages: parseInteger(env, 'AGENT_CONTEXT_MAX_MESSAGES', 80),
       maxChars: parseInteger(env, 'AGENT_CONTEXT_MAX_CHARS', 24_000),

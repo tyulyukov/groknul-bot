@@ -6,11 +6,24 @@ import type {
   AgentToolRegistry,
 } from '../src/services/agent-runner.service.js';
 
-test('AgentRunner stops after 10 tool calls', async () => {
+test('AgentRunner asks the model for a final answer after 10 tool calls', async () => {
   let completions = 0;
+  let finalizationTools: unknown;
+  let finalizationPrompt = '';
   const client: AgentChatClient = {
-    complete: async () => {
+    complete: async (input) => {
       completions += 1;
+      if (completions === 11) {
+        finalizationTools = input.tools;
+        finalizationPrompt = String(input.messages.at(-1)?.content);
+        return {
+          message: {
+            role: 'assistant',
+            content: 'found enough context to answer naturally',
+          },
+        };
+      }
+
       return {
         message: {
           role: 'assistant',
@@ -61,14 +74,21 @@ test('AgentRunner stops after 10 tool calls', async () => {
   });
 
   assert.equal(executed, 10);
+  assert.equal(completions, 11);
+  assert.equal(finalizationTools, undefined);
+  assert.match(
+    finalizationPrompt,
+    /using only the information already available/,
+  );
+  assert.match(finalizationPrompt, /say so clearly/);
   assert.equal(result.status, 'tool_limit_reached');
   assert.equal(
     result.output.items[0]?.plainText,
-    'need a narrower request to keep this sane',
+    'found enough context to answer naturally',
   );
 });
 
-test('AgentRunner does not expose wrong-shape JSON as visible text', async () => {
+test('AgentRunner does not expose or replace wrong-shape JSON with visible text', async () => {
   const client: AgentChatClient = {
     complete: async () => ({
       message: {
@@ -95,11 +115,7 @@ test('AgentRunner does not expose wrong-shape JSON as visible text', async () =>
   });
 
   assert.equal(result.status, 'final');
-  assert.deepEqual(result.output.items, [
-    {
-      plainText: 'я на секунду зламав форматування, але я тут',
-    },
-  ]);
+  assert.deepEqual(result.output.items, []);
 });
 
 test('AgentRunner passes configured reasoning effort to chat client', async () => {
@@ -337,6 +353,7 @@ test('AgentRunner prompt makes progress bubbles conditional', async () => {
   assert.match(systemPrompt, /short ambiguous commands/);
   assert.match(systemPrompt, /get_messages_before/);
   assert.match(systemPrompt, /currentMessageDetails/);
+  assert.match(systemPrompt, /analyze_chat_archive/);
 });
 
 test('AgentRunner does not mark invalid send tool payloads as sent', async () => {

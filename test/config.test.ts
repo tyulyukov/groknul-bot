@@ -13,6 +13,7 @@ test('createConfig loads model names from env with production defaults', () => {
     ...requiredEnv,
     OPENROUTER_REPLY_MODEL: 'custom/reply',
     OPENROUTER_AGENT_MODEL: 'custom/agent',
+    OPENROUTER_ARCHIVE_AGENT_MODEL: 'custom/archive-agent',
     OPENROUTER_IMAGE_MODEL: 'custom/image',
     OPENROUTER_SUMMARY_MODEL: 'custom/summary',
     OPENROUTER_VISION_MODEL: 'custom/vision',
@@ -22,6 +23,7 @@ test('createConfig loads model names from env with production defaults', () => {
   assert.deepEqual(config.openRouter.models, {
     reply: 'custom/reply',
     agent: 'custom/agent',
+    archiveAgent: 'custom/archive-agent',
     image: 'custom/image',
     summary: 'custom/summary',
     vision: 'custom/vision',
@@ -34,6 +36,7 @@ test('createConfig defaults OpenRouter and SearXNG agent settings', () => {
 
   assert.equal(config.openRouter.models.reply, 'openai/gpt-5.6-sol');
   assert.equal(config.openRouter.models.agent, 'openai/gpt-5.6-sol');
+  assert.equal(config.openRouter.models.archiveAgent, 'openai/gpt-5.6-luna');
   assert.equal(config.openRouter.models.image, 'openai/gpt-5.4-image-2');
   assert.equal(config.openRouter.models.summary, 'openai/gpt-5.4-mini');
   assert.equal(config.openRouter.models.vision, 'openai/gpt-5.4-mini');
@@ -46,6 +49,11 @@ test('createConfig defaults OpenRouter and SearXNG agent settings', () => {
   assert.equal(config.telegram.webhookTimeoutMs, 9_000);
   assert.equal(config.telegram.ambient.imageProbability, 0.05);
   assert.equal(config.agent.maxToolCalls, 10);
+  assert.deepEqual(config.agent.archive, {
+    maxToolCalls: 50,
+    maxMessages: 1_000,
+    maxTokens: 2_200,
+  });
 });
 
 test('createConfig allows overriding Codex OAuth settings', () => {
@@ -61,7 +69,10 @@ test('createConfig allows overriding Codex OAuth settings', () => {
   assert.equal(config.codex.ownerTelegramId, 870_452_692);
   assert.equal(config.codex.issuer, 'https://auth.example.test');
   assert.equal(config.codex.clientId, 'client-test');
-  assert.equal(config.codex.chatgptBaseUrl, 'https://chat.example.test/backend-api');
+  assert.equal(
+    config.codex.chatgptBaseUrl,
+    'https://chat.example.test/backend-api',
+  );
   assert.equal(config.codex.devicePollMaxMs, 1_000);
 });
 

@@ -135,6 +135,13 @@ test('createIndexes drops the legacy global telegramId index and keeps compound 
     ),
     false,
   );
+  assert.ok(
+    collection.createIndexCalls.some(
+      (call) =>
+        JSON.stringify(call.keys) ===
+        JSON.stringify({ chatTelegramId: 1, telegramId: -1 }),
+    ),
+  );
 });
 
 test('searchMessages escapes regex metacharacters in user query', async () => {
@@ -155,6 +162,28 @@ test('searchMessages escapes regex metacharacters in user query', async () => {
       text: { $regex: 'a\\+b\\?\\(test\\)', $options: 'i' },
     },
   });
+});
+
+test('searchMessages paginates deterministically by telegram message id', async () => {
+  const collection = new FakeMessageCollection();
+  const model = new MessageModel(collection as never);
+
+  await model.searchMessages({
+    chatTelegramId: -100,
+    beforeMessageTelegramId: 123,
+    limit: 31,
+  });
+
+  assert.deepEqual(collection.lastPipeline.slice(0, 3), [
+    {
+      $match: {
+        chatTelegramId: -100,
+        telegramId: { $lt: 123 },
+      },
+    },
+    { $sort: { telegramId: -1 } },
+    { $limit: 31 },
+  ]);
 });
 
 test('getMessagesBefore reads messages above the trigger by telegram id', async () => {

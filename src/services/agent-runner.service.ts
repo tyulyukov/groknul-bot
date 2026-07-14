@@ -160,7 +160,12 @@ export class AgentRunner {
 
       for (const toolCall of toolCalls) {
         if (toolCallsUsed >= this.options.maxToolCalls) {
-          return this.toolLimitResult(toolsUsed);
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({ status: 'tool_limit_reached' }),
+          });
+          continue;
         }
 
         toolCallsUsed += 1;
@@ -209,7 +214,7 @@ export class AgentRunner {
       }
     }
 
-    return this.toolLimitResult(toolsUsed);
+    return this.finalizeAfterToolLimit(messages, toolsUsed);
   }
 
   private parseToolArgs(raw: string): Record<string, unknown> {
@@ -226,14 +231,14 @@ export class AgentRunner {
   private parseFinalOutput(content: string | null | undefined): SendPayload {
     const text = this.normalizeFinalContent(content);
     if (!text) {
-      return this.safeFallbackOutput();
+      return { items: [] };
     }
 
     try {
       const parsed = JSON.parse(text) as Partial<SendPayload>;
       const sendPayload = parseSendPayload(parsed);
       if (sendPayload) return sendPayload;
-      if (this.looksLikeJson(text)) return this.safeFallbackOutput();
+      if (this.looksLikeJson(text)) return { items: [] };
     } catch {
       return {
         items: [
@@ -273,16 +278,6 @@ export class AgentRunner {
     );
   }
 
-  private safeFallbackOutput(): SendPayload {
-    return {
-      items: [
-        {
-          plainText: 'я на секунду зламав форматування, але я тут',
-        },
-      ],
-    };
-  }
-
   private normalizeFinalContent(content: string | null | undefined): string {
     const text = content?.trim() ?? '';
     const fencedJson = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
@@ -296,16 +291,28 @@ export class AgentRunner {
     );
   }
 
-  private toolLimitResult(toolsUsed: string[]): AgentRunResult {
+  private async finalizeAfterToolLimit(
+    messages: AgentChatMessage[],
+    toolsUsed: string[],
+  ): Promise<AgentRunResult> {
+    const completion = await this.client.complete({
+      model: this.options.model,
+      messages: [
+        ...messages,
+        {
+          role: 'system',
+          content:
+            'The tool-call limit has been reached. Give the best final answer using only the information already available. Do not call more tools. If the limit prevented you from completing the request, say so clearly and distinguish verified findings from anything still unresolved.',
+        },
+      ],
+      temperature: 0.7,
+      maxTokens: 700,
+      reasoningEffort: this.options.reasoningEffort,
+    });
+
     return {
       status: 'tool_limit_reached',
-      output: {
-        items: [
-          {
-            plainText: 'need a narrower request to keep this sane',
-          },
-        ],
-      },
+      output: this.parseFinalOutput(completion.message.content),
       toolsUsed,
     };
   }
@@ -331,6 +338,7 @@ Context rules:
 - For chat accounting questions like "how many messages today", "скок сообщений", "messages/day", "top flooders", or activity peaks, call get_chat_stats. If the user asks about precision, say it counts stored messages the bot received.
 - For poll questions, first use currentMessageDetails/replyContext/context. If needed, call get_raw_message for the poll message to inspect the stored Telegram payload. Do not claim live voter identities or historical poll changes unless the raw/stored payload actually contains them.
 - For a date/time window, use search_messages with since/until and a sane limit. For stored digests, use get_chat_summaries with level/limit/since/until.
+- For broad archive research that compares many people or messages, audits historical claims/predictions, builds a ranking, or needs exhaustive pagination plus external verification, call analyze_chat_archive once with the complete task and known date bounds. Treat its report as evidence and disclose its coverage or limits.
 - Do not request huge context. If a tool returns too_large, make a narrower follow-up tool call.
 - Use web_search only when the user asks for external/time-sensitive info or you genuinely need web knowledge.
 - When using web_search for a short reply-based request, include the concrete entity/topic from replyContext in the query.

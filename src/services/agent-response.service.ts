@@ -26,6 +26,10 @@ import {
   RuntimeCodexOAuthStatusProvider,
   type CodexOAuthStatusProvider,
 } from './codex-oauth-status.service.js';
+import {
+  ArchiveAnalysisService,
+  type ArchiveAnalyzer,
+} from './archive-analysis.service.js';
 
 export interface AgentResponseInput {
   api: TelegramApiLike;
@@ -199,6 +203,8 @@ const dateField = (value: unknown): string | undefined => {
 };
 
 export class AgentResponseService {
+  private readonly archiveAnalyzer: ArchiveAnalyzer;
+
   constructor(
     private readonly aiClient: AiClient,
     private readonly aiService: AiService,
@@ -206,7 +212,23 @@ export class AgentResponseService {
     private readonly rawTelegramApiClient: RawTelegramApiClient,
     private readonly searxngSearchService: SearxngSearchService,
     private readonly codexOAuthStatus: CodexOAuthStatusProvider = new RuntimeCodexOAuthStatusProvider(),
-  ) {}
+    archiveAnalyzer?: ArchiveAnalyzer,
+  ) {
+    this.archiveAnalyzer =
+      archiveAnalyzer ??
+      new ArchiveAnalysisService(
+        aiClient,
+        contextToolService,
+        searxngSearchService,
+        {
+          model: config.openRouter.models.archiveAgent,
+          maxToolCalls: config.agent.archive.maxToolCalls,
+          maxMessages: config.agent.archive.maxMessages,
+          pageSize: config.agent.context.maxResults,
+          maxTokens: config.agent.archive.maxTokens,
+        },
+      );
+  }
 
   async generateAndSend(
     input: AgentResponseInput & { api: TelegramApiLike & TelegramActionApi },
@@ -244,6 +266,7 @@ export class AgentResponseService {
       codexOAuthStatus: this.codexOAuthStatus,
       contextTools: this.contextToolService,
       searchService: this.searxngSearchService,
+      archiveAnalyzer: this.archiveAnalyzer,
       messageModel,
     });
     const runner = new AgentRunner(this.aiClient, registry, {

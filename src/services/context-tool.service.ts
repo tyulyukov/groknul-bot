@@ -18,11 +18,14 @@ export interface ContextToolMessageResult {
   id: number;
   from: string;
   userTelegramId?: number;
+  isBot?: boolean;
   text?: string;
   context?: string;
   fileName?: string;
   messageType?: PopulatedMessage['messageType'];
   sentAt?: Date;
+  editedAt?: Date;
+  isDeleted?: boolean;
   replyToMessageId?: number;
   replyQuoteText?: string;
   reactions?: string[];
@@ -53,6 +56,11 @@ export interface ContextToolRawMessageResult {
   truncated: boolean;
 }
 
+export interface ContextToolPageResult {
+  hasMore: boolean;
+  nextBeforeMessageId?: number;
+}
+
 export type ContextToolResult =
   | {
       status: 'ok';
@@ -63,6 +71,7 @@ export type ContextToolResult =
       summary?: string;
       stats?: ContextToolStatsResult;
       rawMessage?: ContextToolRawMessageResult;
+      page?: ContextToolPageResult;
       deleted?: boolean;
     }
   | {
@@ -157,6 +166,7 @@ export class ContextToolService {
       since?: string;
       until?: string;
       fromUser?: number;
+      beforeMessageId?: number;
       limit?: number;
     },
   ): Promise<ContextToolResult> {
@@ -174,10 +184,20 @@ export class ContextToolService {
       since,
       until,
       fromUserTelegramId: input.fromUser,
-      limit,
+      beforeMessageTelegramId: input.beforeMessageId,
+      limit: limit + 1,
     });
 
-    return this.messagesResult(messages);
+    const hasMore = messages.length > limit;
+    const pageMessages = messages.slice(0, limit);
+    const nextBeforeMessageId = hasMore
+      ? pageMessages.at(-1)?.telegramId
+      : undefined;
+
+    return this.messagesResult(pageMessages, {
+      hasMore,
+      nextBeforeMessageId,
+    });
   }
 
   async getChatStats(
@@ -711,7 +731,10 @@ export class ContextToolService {
     };
   }
 
-  private messagesResult(messages: PopulatedMessage[]): ContextToolResult {
+  private messagesResult(
+    messages: PopulatedMessage[],
+    page?: ContextToolPageResult,
+  ): ContextToolResult {
     const formatted = messages.map((message) => this.formatMessage(message));
     const totalChars = formatted.reduce(
       (sum, message) => sum + message.length,
@@ -727,7 +750,7 @@ export class ContextToolService {
       };
     }
 
-    return {
+    const result: Extract<ContextToolResult, { status: 'ok' }> = {
       status: 'ok',
       messages: messages.map((message) => {
         const reactions = message.reactions
@@ -744,6 +767,9 @@ export class ContextToolService {
         };
 
         if (message.fileName) result.fileName = message.fileName;
+        if (message.user?.isBot) result.isBot = true;
+        if (message.editDate) result.editedAt = message.editDate;
+        if (message.isDeleted) result.isDeleted = true;
         if (message.messageType && message.messageType !== 'text') {
           result.messageType = message.messageType;
         }
@@ -754,6 +780,9 @@ export class ContextToolService {
         return result;
       }),
     };
+
+    if (page) result.page = page;
+    return result;
   }
 
   private formatMessage(message: PopulatedMessage): string {
