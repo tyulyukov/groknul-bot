@@ -1,6 +1,10 @@
-export const getStartMessage = (botUsername: string) => `🤖 <b>Groknul Bot</b>
+import { BOT_DISPLAY_NAME } from './bot-identity.js';
 
-I'm a bold, opinionated, yet helpful group chat assistant that observes conversations and provides informative responses!
+export const getStartMessage = (
+  botUsername: string,
+) => `🤖 <b>${BOT_DISPLAY_NAME}</b>
+
+I'm ${BOT_DISPLAY_NAME}, a bold, opinionated, yet helpful group chat assistant that observes conversations and provides informative responses!
 
 <b>How to use me:</b>
 • Add me to your group chat

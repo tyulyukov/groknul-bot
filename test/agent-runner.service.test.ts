@@ -345,6 +345,7 @@ test('AgentRunner prompt makes progress bubbles conditional', async () => {
   });
 
   assert.match(systemPrompt, /Progress bubbles are optional/);
+  assert.match(systemPrompt, /You are Ishak 1\.5 \(@groknul_bot\)/);
   assert.match(
     systemPrompt,
     /Do not send a progress bubble for quick follow-ups/,
