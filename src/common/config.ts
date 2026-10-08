@@ -178,12 +178,12 @@ export const createConfig = (env: EnvSource): Config => ({
   openRouter: {
     apiKey: getRequiredEnvVar(env, 'OPENROUTER_API_KEY'),
     models: {
-      reply: env.OPENROUTER_REPLY_MODEL || 'openai/gpt-5.6-sol',
-      agent: env.OPENROUTER_AGENT_MODEL || 'openai/gpt-5.6-sol',
-      archiveAgent: env.OPENROUTER_ARCHIVE_AGENT_MODEL || 'openai/gpt-5.6-luna',
+      reply: env.OPENROUTER_REPLY_MODEL || 'openai/gpt-6.1-sol',
+      agent: env.OPENROUTER_AGENT_MODEL || 'openai/gpt-6.1-sol',
+      archiveAgent: env.OPENROUTER_ARCHIVE_AGENT_MODEL || 'openai/gpt-6-luna',
       image: env.OPENROUTER_IMAGE_MODEL || 'openai/gpt-5.4-image-2',
-      summary: env.OPENROUTER_SUMMARY_MODEL || 'openai/gpt-5.4-mini',
-      vision: env.OPENROUTER_VISION_MODEL || 'openai/gpt-5.4-mini',
+      summary: env.OPENROUTER_SUMMARY_MODEL || 'openai/gpt-6-luna',
+      vision: env.OPENROUTER_VISION_MODEL || 'openai/gpt-6-luna',
     },
   },
   codex: {

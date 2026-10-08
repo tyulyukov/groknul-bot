@@ -31,11 +31,11 @@ The name is inspired by Twitter/X’s Grok. "groknul" also playfully echoes the 
 - **Database**: MongoDB (messages, users, memories, summaries)
 - **Local media processing**: `faster-whisper` + `ffmpeg` in Docker for transcripts and video frame extraction
 - **AI (OpenRouter)**:
-  - Reply: `openai/gpt-5.6-sol`
-  - Agent/router: `openai/gpt-5.6-sol`
-  - Archive analysis worker: `openai/gpt-5.6-luna` (50 tool calls, up to 1,000 stored messages)
+  - Reply: `openai/gpt-6.1-sol`
+  - Agent/router: `openai/gpt-6.1-sol`
+  - Archive analysis worker: `openai/gpt-6-luna` (50 tool calls, up to 1,000 stored messages)
   - Image generation: `openai/gpt-5.4-image-2`
-  - Summarization & Vision: `openai/gpt-5.4-mini`
+  - Summarization & Vision: `openai/gpt-6-luna`
   - Optional Codex OAuth first for `openai/...` models, with OpenRouter fallback
   - Web search: self-hosted SearXNG
 - **Server**: Hono (Node) for webhook endpoints
@@ -59,7 +59,7 @@ TELEGRAM_BOT_ADMIN_IDS=123456789,987654321               # comma-separated numer
 
 # OpenRouter AI Configuration
 OPENROUTER_API_KEY=sk_your_openrouter_api_key_here
-OPENROUTER_ARCHIVE_AGENT_MODEL=openai/gpt-5.6-luna           # optional
+OPENROUTER_ARCHIVE_AGENT_MODEL=openai/gpt-6-luna           # optional
 OPENROUTER_IMAGE_MODEL=openai/gpt-5.4-image-2               # optional
 AGENT_ARCHIVE_MAX_TOOL_CALLS=50                              # optional
 AGENT_ARCHIVE_MAX_MESSAGES=1000                              # optional
