@@ -4,7 +4,7 @@ import type { AgentChatClient } from '../src/services/agent-runner.service.js';
 import { ArchiveAnalysisService } from '../src/services/archive-analysis.service.js';
 
 const options = {
-  model: 'openai/gpt-5.6-luna',
+  model: 'openai/gpt-6-luna',
   maxToolCalls: 50,
   maxMessages: 1_000,
   pageSize: 30,
